@@ -88,7 +88,8 @@ describe('createTeamSession context resolution', () => {
   });
 
   it('creates a detached session when running outside tmux', async () => {
-    vi.unstubAllEnvs();
+    vi.stubEnv('TMUX', '');
+    vi.stubEnv('TMUX_PANE', '');
 
     const session = await createTeamSession('race-team', 0, '/tmp');
 
