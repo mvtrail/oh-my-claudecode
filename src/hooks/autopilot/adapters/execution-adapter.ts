@@ -7,13 +7,18 @@
  * When execution='solo', uses direct executor agents in the current session.
  */
 
-import type { PipelineStageAdapter, PipelineConfig, PipelineContext } from '../pipeline-types.js';
+import type {
+  PipelineStageAdapter,
+  PipelineConfig,
+  PipelineContext,
+} from "../pipeline-types.js";
+import { resolveAutopilotPlanPath } from "../../../config/plan-output.js";
 
-export const EXECUTION_COMPLETION_SIGNAL = 'PIPELINE_EXECUTION_COMPLETE';
+export const EXECUTION_COMPLETION_SIGNAL = "PIPELINE_EXECUTION_COMPLETE";
 
 export const executionAdapter: PipelineStageAdapter = {
-  id: 'execution',
-  name: 'Execution',
+  id: "execution",
+  name: "Execution",
   completionSignal: EXECUTION_COMPLETION_SIGNAL,
 
   shouldSkip(_config: PipelineConfig): boolean {
@@ -22,8 +27,8 @@ export const executionAdapter: PipelineStageAdapter = {
   },
 
   getPrompt(context: PipelineContext): string {
-    const planPath = context.planPath || '.omc/plans/autopilot-impl.md';
-    const isTeam = context.config.execution === 'team';
+    const planPath = context.planPath || resolveAutopilotPlanPath();
+    const isTeam = context.config.execution === "team";
 
     if (isTeam) {
       return `## PIPELINE STAGE: EXECUTION (Team Mode)

@@ -16,23 +16,28 @@
  * Pipeline stage identifiers in execution order.
  * Each stage is optional and can be skipped via configuration.
  */
-export type PipelineStageId = 'ralplan' | 'execution' | 'ralph' | 'qa';
+export type PipelineStageId = "ralplan" | "execution" | "ralph" | "qa";
 
 /** Terminal pipeline states */
-export type PipelineTerminalState = 'complete' | 'failed' | 'cancelled';
+export type PipelineTerminalState = "complete" | "failed" | "cancelled";
 
 /** All possible pipeline phase values (stages + terminal) */
 export type PipelinePhase = PipelineStageId | PipelineTerminalState;
 
 /** Status of an individual stage */
-export type StageStatus = 'pending' | 'active' | 'complete' | 'failed' | 'skipped';
+export type StageStatus =
+  | "pending"
+  | "active"
+  | "complete"
+  | "failed"
+  | "skipped";
 
 /** The canonical stage execution order */
 export const STAGE_ORDER: readonly PipelineStageId[] = [
-  'ralplan',
-  'execution',
-  'ralph',
-  'qa',
+  "ralplan",
+  "execution",
+  "ralph",
+  "qa",
 ] as const;
 
 // ============================================================================
@@ -40,12 +45,12 @@ export const STAGE_ORDER: readonly PipelineStageId[] = [
 // ============================================================================
 
 /** Execution backend for the execution stage */
-export type ExecutionBackend = 'team' | 'solo';
+export type ExecutionBackend = "team" | "solo";
 
 /** Verification engine configuration */
 export interface VerificationConfig {
   /** Engine to use for verification (currently only 'ralph') */
-  engine: 'ralph';
+  engine: "ralph";
   /** Maximum verification iterations before giving up */
   maxIterations: number;
 }
@@ -68,7 +73,7 @@ export interface VerificationConfig {
  */
 export interface PipelineConfig {
   /** Planning stage: 'ralplan' for consensus planning, 'direct' for simple planning, false to skip */
-  planning: 'ralplan' | 'direct' | false;
+  planning: "ralplan" | "direct" | false;
   /** Execution backend: 'team' for multi-worker, 'solo' for single-session */
   execution: ExecutionBackend;
   /** Verification config, or false to skip */
@@ -79,10 +84,10 @@ export interface PipelineConfig {
 
 /** Default pipeline configuration (matches current autopilot behavior) */
 export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
-  planning: 'ralplan',
-  execution: 'solo',
+  planning: "ralplan",
+  execution: "solo",
   verification: {
-    engine: 'ralph',
+    engine: "ralph",
     maxIterations: 100,
   },
   qa: true,
@@ -106,6 +111,8 @@ export interface PipelineContext {
   specPath?: string;
   /** Path to the generated implementation plan */
   planPath?: string;
+  /** Path to the shared open questions file */
+  openQuestionsPath?: string;
   /** The full pipeline configuration */
   config: PipelineConfig;
 }
@@ -173,13 +180,18 @@ export interface PipelineTracking {
  * Maps deprecated mode names to their pipeline configuration equivalents.
  * Used to translate ultrawork/ultrapilot invocations into autopilot + config.
  */
-export const DEPRECATED_MODE_ALIASES: Record<string, { config: Partial<PipelineConfig>; message: string }> = {
+export const DEPRECATED_MODE_ALIASES: Record<
+  string,
+  { config: Partial<PipelineConfig>; message: string }
+> = {
   ultrawork: {
-    config: { execution: 'team' },
-    message: 'ultrawork is deprecated. Use /autopilot with execution: "team" instead.',
+    config: { execution: "team" },
+    message:
+      'ultrawork is deprecated. Use /autopilot with execution: "team" instead.',
   },
   ultrapilot: {
-    config: { execution: 'team' },
-    message: 'ultrapilot is deprecated. Use /autopilot with execution: "team" instead.',
+    config: { execution: "team" },
+    message:
+      'ultrapilot is deprecated. Use /autopilot with execution: "team" instead.',
   },
 };

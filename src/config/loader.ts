@@ -7,16 +7,16 @@
  * - Environment variables
  */
 
-import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import type { PluginConfig, ExternalModelsConfig } from '../shared/types.js';
-import { getConfigDir } from '../utils/paths.js';
-import { parseJsonc } from '../utils/jsonc.js';
+import { readFileSync, existsSync } from "fs";
+import { join, dirname } from "path";
+import type { PluginConfig, ExternalModelsConfig } from "../shared/types.js";
+import { getConfigDir } from "../utils/paths.js";
+import { parseJsonc } from "../utils/jsonc.js";
 import {
   getDefaultTierModels,
   BUILTIN_EXTERNAL_MODEL_DEFAULTS,
   isNonClaudeProvider,
-} from './models.js';
+} from "./models.js";
 
 /**
  * Default configuration.
@@ -57,50 +57,75 @@ export function buildDefaultConfig(): PluginConfig {
     },
     features: {
       parallelExecution: true,
-      lspTools: true,   // Real LSP integration with language servers
-      astTools: true,   // Real AST tools using ast-grep
+      lspTools: true, // Real LSP integration with language servers
+      astTools: true, // Real AST tools using ast-grep
       continuationEnforcement: true,
-      autoContextInjection: true
+      autoContextInjection: true,
     },
     mcpServers: {
       exa: { enabled: true },
-      context7: { enabled: true }
+      context7: { enabled: true },
     },
     permissions: {
       allowBash: true,
       allowEdit: true,
       allowWrite: true,
-      maxBackgroundTasks: 5
+      maxBackgroundTasks: 5,
     },
     magicKeywords: {
-      ultrawork: ['ultrawork', 'ulw', 'uw'],
-      search: ['search', 'find', 'locate'],
-      analyze: ['analyze', 'investigate', 'examine'],
-      ultrathink: ['ultrathink', 'think', 'reason', 'ponder']
+      ultrawork: ["ultrawork", "ulw", "uw"],
+      search: ["search", "find", "locate"],
+      analyze: ["analyze", "investigate", "examine"],
+      ultrathink: ["ultrathink", "think", "reason", "ponder"],
     },
     // Intelligent model routing configuration
     routing: {
       enabled: true,
-      defaultTier: 'MEDIUM',
+      defaultTier: "MEDIUM",
       forceInherit: false,
       escalationEnabled: true,
       maxEscalations: 2,
       tierModels: { ...defaultTierModels },
       agentOverrides: {
-        architect: { tier: 'HIGH', reason: 'Advisory agent requires deep reasoning' },
-        planner: { tier: 'HIGH', reason: 'Strategic planning requires deep reasoning' },
-        critic: { tier: 'HIGH', reason: 'Critical review requires deep reasoning' },
-        analyst: { tier: 'HIGH', reason: 'Pre-planning analysis requires deep reasoning' },
-        explore: { tier: 'LOW', reason: 'Exploration is search-focused' },
-        'writer': { tier: 'LOW', reason: 'Documentation is straightforward' }
+        architect: {
+          tier: "HIGH",
+          reason: "Advisory agent requires deep reasoning",
+        },
+        planner: {
+          tier: "HIGH",
+          reason: "Strategic planning requires deep reasoning",
+        },
+        critic: {
+          tier: "HIGH",
+          reason: "Critical review requires deep reasoning",
+        },
+        analyst: {
+          tier: "HIGH",
+          reason: "Pre-planning analysis requires deep reasoning",
+        },
+        explore: { tier: "LOW", reason: "Exploration is search-focused" },
+        writer: { tier: "LOW", reason: "Documentation is straightforward" },
       },
       escalationKeywords: [
-        'critical', 'production', 'urgent', 'security', 'breaking',
-        'architecture', 'refactor', 'redesign', 'root cause'
+        "critical",
+        "production",
+        "urgent",
+        "security",
+        "breaking",
+        "architecture",
+        "refactor",
+        "redesign",
+        "root cause",
       ],
       simplificationKeywords: [
-        'find', 'list', 'show', 'where', 'search', 'locate', 'grep'
-      ]
+        "find",
+        "list",
+        "show",
+        "where",
+        "search",
+        "locate",
+        "grep",
+      ],
     },
     // External models configuration (Codex, Gemini)
     // Static defaults only — env var overrides applied in loadEnvConfig()
@@ -110,16 +135,20 @@ export function buildDefaultConfig(): PluginConfig {
         geminiModel: BUILTIN_EXTERNAL_MODEL_DEFAULTS.geminiModel,
       },
       fallbackPolicy: {
-        onModelFailure: 'provider_chain',
+        onModelFailure: "provider_chain",
         allowCrossProvider: false,
-        crossProviderOrder: ['codex', 'gemini'],
+        crossProviderOrder: ["codex", "gemini"],
       },
     },
     // Delegation routing configuration (opt-in feature for external model routing)
     delegationRouting: {
       enabled: false,
-      defaultProvider: 'claude',
+      defaultProvider: "claude",
       roles: {},
+    },
+    planOutput: {
+      directory: ".omc/plans",
+      filenameTemplate: "{{name}}.md",
     },
     startupCodebaseMap: {
       enabled: true,
@@ -144,8 +173,8 @@ export function getConfigPaths(): { user: string; project: string } {
   const userConfigDir = getConfigDir();
 
   return {
-    user: join(userConfigDir, 'claude-omc', 'config.jsonc'),
-    project: join(process.cwd(), '.claude', 'omc.jsonc')
+    user: join(userConfigDir, "claude-omc", "config.jsonc"),
+    project: join(process.cwd(), ".claude", "omc.jsonc"),
   };
 }
 
@@ -158,7 +187,7 @@ export function loadJsoncFile(path: string): PluginConfig | null {
   }
 
   try {
-    const content = readFileSync(path, 'utf-8');
+    const content = readFileSync(path, "utf-8");
     const result = parseJsonc(content);
     return result as PluginConfig;
   } catch (error) {
@@ -175,22 +204,23 @@ export function deepMerge<T extends object>(target: T, source: Partial<T>): T {
   const mutableResult = result as Record<string, unknown>;
 
   for (const key of Object.keys(source) as (keyof T)[]) {
-    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    if (key === "__proto__" || key === "constructor" || key === "prototype")
+      continue;
     const sourceValue = source[key];
     const targetValue = mutableResult[key as string];
 
     if (
       sourceValue !== undefined &&
-      typeof sourceValue === 'object' &&
+      typeof sourceValue === "object" &&
       sourceValue !== null &&
       !Array.isArray(sourceValue) &&
-      typeof targetValue === 'object' &&
+      typeof targetValue === "object" &&
       targetValue !== null &&
       !Array.isArray(targetValue)
     ) {
       mutableResult[key as string] = deepMerge(
         targetValue as Record<string, unknown>,
-        sourceValue as Record<string, unknown>
+        sourceValue as Record<string, unknown>,
       );
     } else if (sourceValue !== undefined) {
       mutableResult[key as string] = sourceValue as unknown;
@@ -210,7 +240,7 @@ export function loadEnvConfig(): Partial<PluginConfig> {
   if (process.env.EXA_API_KEY) {
     config.mcpServers = {
       ...config.mcpServers,
-      exa: { enabled: true, apiKey: process.env.EXA_API_KEY }
+      exa: { enabled: true, apiKey: process.env.EXA_API_KEY },
     };
   }
 
@@ -218,14 +248,14 @@ export function loadEnvConfig(): Partial<PluginConfig> {
   if (process.env.OMC_PARALLEL_EXECUTION !== undefined) {
     config.features = {
       ...config.features,
-      parallelExecution: process.env.OMC_PARALLEL_EXECUTION === 'true'
+      parallelExecution: process.env.OMC_PARALLEL_EXECUTION === "true",
     };
   }
 
   if (process.env.OMC_LSP_TOOLS !== undefined) {
     config.features = {
       ...config.features,
-      lspTools: process.env.OMC_LSP_TOOLS === 'true'
+      lspTools: process.env.OMC_LSP_TOOLS === "true",
     };
   }
 
@@ -234,7 +264,7 @@ export function loadEnvConfig(): Partial<PluginConfig> {
     if (!isNaN(maxTasks)) {
       config.permissions = {
         ...config.permissions,
-        maxBackgroundTasks: maxTasks
+        maxBackgroundTasks: maxTasks,
       };
     }
   }
@@ -243,29 +273,29 @@ export function loadEnvConfig(): Partial<PluginConfig> {
   if (process.env.OMC_ROUTING_ENABLED !== undefined) {
     config.routing = {
       ...config.routing,
-      enabled: process.env.OMC_ROUTING_ENABLED === 'true'
+      enabled: process.env.OMC_ROUTING_ENABLED === "true",
     };
   }
 
   if (process.env.OMC_ROUTING_FORCE_INHERIT !== undefined) {
     config.routing = {
       ...config.routing,
-      forceInherit: process.env.OMC_ROUTING_FORCE_INHERIT === 'true'
+      forceInherit: process.env.OMC_ROUTING_FORCE_INHERIT === "true",
     };
   }
 
   if (process.env.OMC_ROUTING_DEFAULT_TIER) {
     const tier = process.env.OMC_ROUTING_DEFAULT_TIER.toUpperCase();
-    if (tier === 'LOW' || tier === 'MEDIUM' || tier === 'HIGH') {
+    if (tier === "LOW" || tier === "MEDIUM" || tier === "HIGH") {
       config.routing = {
         ...config.routing,
-        defaultTier: tier as 'LOW' | 'MEDIUM' | 'HIGH'
+        defaultTier: tier as "LOW" | "MEDIUM" | "HIGH",
       };
     }
   }
 
   // Model alias overrides from environment (issue #1211)
-  const aliasKeys = ['HAIKU', 'SONNET', 'OPUS'] as const;
+  const aliasKeys = ["HAIKU", "SONNET", "OPUS"] as const;
   const modelAliases: Record<string, string> = {};
   for (const key of aliasKeys) {
     const envVal = process.env[`OMC_MODEL_ALIAS_${key}`];
@@ -277,57 +307,69 @@ export function loadEnvConfig(): Partial<PluginConfig> {
   if (Object.keys(modelAliases).length > 0) {
     config.routing = {
       ...config.routing,
-      modelAliases: modelAliases as Record<string, 'haiku' | 'sonnet' | 'opus' | 'inherit'>,
+      modelAliases: modelAliases as Record<
+        string,
+        "haiku" | "sonnet" | "opus" | "inherit"
+      >,
     };
   }
 
   if (process.env.OMC_ESCALATION_ENABLED !== undefined) {
     config.routing = {
       ...config.routing,
-      escalationEnabled: process.env.OMC_ESCALATION_ENABLED === 'true'
+      escalationEnabled: process.env.OMC_ESCALATION_ENABLED === "true",
     };
   }
 
   // External models configuration from environment
-  const externalModelsDefaults: ExternalModelsConfig['defaults'] = {};
+  const externalModelsDefaults: ExternalModelsConfig["defaults"] = {};
 
   if (process.env.OMC_EXTERNAL_MODELS_DEFAULT_PROVIDER) {
     const provider = process.env.OMC_EXTERNAL_MODELS_DEFAULT_PROVIDER;
-    if (provider === 'codex' || provider === 'gemini') {
+    if (provider === "codex" || provider === "gemini") {
       externalModelsDefaults.provider = provider;
     }
   }
 
   if (process.env.OMC_EXTERNAL_MODELS_DEFAULT_CODEX_MODEL) {
-    externalModelsDefaults.codexModel = process.env.OMC_EXTERNAL_MODELS_DEFAULT_CODEX_MODEL;
+    externalModelsDefaults.codexModel =
+      process.env.OMC_EXTERNAL_MODELS_DEFAULT_CODEX_MODEL;
   } else if (process.env.OMC_CODEX_DEFAULT_MODEL) {
     // Legacy fallback
     externalModelsDefaults.codexModel = process.env.OMC_CODEX_DEFAULT_MODEL;
   }
 
   if (process.env.OMC_EXTERNAL_MODELS_DEFAULT_GEMINI_MODEL) {
-    externalModelsDefaults.geminiModel = process.env.OMC_EXTERNAL_MODELS_DEFAULT_GEMINI_MODEL;
+    externalModelsDefaults.geminiModel =
+      process.env.OMC_EXTERNAL_MODELS_DEFAULT_GEMINI_MODEL;
   } else if (process.env.OMC_GEMINI_DEFAULT_MODEL) {
     // Legacy fallback
     externalModelsDefaults.geminiModel = process.env.OMC_GEMINI_DEFAULT_MODEL;
   }
 
-  const externalModelsFallback: ExternalModelsConfig['fallbackPolicy'] = {
-    onModelFailure: 'provider_chain'
+  const externalModelsFallback: ExternalModelsConfig["fallbackPolicy"] = {
+    onModelFailure: "provider_chain",
   };
 
   if (process.env.OMC_EXTERNAL_MODELS_FALLBACK_POLICY) {
     const policy = process.env.OMC_EXTERNAL_MODELS_FALLBACK_POLICY;
-    if (policy === 'provider_chain' || policy === 'cross_provider' || policy === 'claude_only') {
+    if (
+      policy === "provider_chain" ||
+      policy === "cross_provider" ||
+      policy === "claude_only"
+    ) {
       externalModelsFallback.onModelFailure = policy;
     }
   }
 
   // Only add externalModels if any env vars were set
-  if (Object.keys(externalModelsDefaults).length > 0 || externalModelsFallback.onModelFailure !== 'provider_chain') {
+  if (
+    Object.keys(externalModelsDefaults).length > 0 ||
+    externalModelsFallback.onModelFailure !== "provider_chain"
+  ) {
     config.externalModels = {
       defaults: externalModelsDefaults,
-      fallbackPolicy: externalModelsFallback
+      fallbackPolicy: externalModelsFallback,
     };
   }
 
@@ -335,16 +377,16 @@ export function loadEnvConfig(): Partial<PluginConfig> {
   if (process.env.OMC_DELEGATION_ROUTING_ENABLED !== undefined) {
     config.delegationRouting = {
       ...config.delegationRouting,
-      enabled: process.env.OMC_DELEGATION_ROUTING_ENABLED === 'true',
+      enabled: process.env.OMC_DELEGATION_ROUTING_ENABLED === "true",
     };
   }
 
   if (process.env.OMC_DELEGATION_ROUTING_DEFAULT_PROVIDER) {
     const provider = process.env.OMC_DELEGATION_ROUTING_DEFAULT_PROVIDER;
-    if (['claude', 'codex', 'gemini'].includes(provider)) {
+    if (["claude", "codex", "gemini"].includes(provider)) {
       config.delegationRouting = {
         ...config.delegationRouting,
-        defaultProvider: provider as 'claude' | 'codex' | 'gemini',
+        defaultProvider: provider as "claude" | "codex" | "gemini",
       };
     }
   }
@@ -398,17 +440,20 @@ export function loadConfig(): PluginConfig {
 }
 
 const OMC_STARTUP_COMPACTABLE_SECTIONS = [
-  'agent_catalog',
-  'skills',
-  'team_compositions',
+  "agent_catalog",
+  "skills",
+  "team_compositions",
 ] as const;
 
 function looksLikeOmcGuidance(content: string): boolean {
-  return content.includes('<guidance_schema_contract>')
-    && /oh-my-(claudecode|codex)/i.test(content)
-    && OMC_STARTUP_COMPACTABLE_SECTIONS.some(section =>
-      content.includes(`<${section}>`) && content.includes(`</${section}>`)
-    );
+  return (
+    content.includes("<guidance_schema_contract>") &&
+    /oh-my-(claudecode|codex)/i.test(content) &&
+    OMC_STARTUP_COMPACTABLE_SECTIONS.some(
+      (section) =>
+        content.includes(`<${section}>`) && content.includes(`</${section}>`),
+    )
+  );
 }
 
 export function compactOmcStartupGuidance(content: string): string {
@@ -420,20 +465,22 @@ export function compactOmcStartupGuidance(content: string): string {
   let removedAny = false;
 
   for (const section of OMC_STARTUP_COMPACTABLE_SECTIONS) {
-    const pattern = new RegExp(`\n*<${section}>[\\s\\S]*?<\/${section}>\n*`, 'g');
-    const next = compacted.replace(pattern, '\n\n');
+    const pattern = new RegExp(
+      `\n*<${section}>[\\s\\S]*?<\/${section}>\n*`,
+      "g",
+    );
+    const next = compacted.replace(pattern, "\n\n");
     removedAny = removedAny || next !== compacted;
     compacted = next;
   }
-
 
   if (!removedAny) {
     return content;
   }
 
   return compacted
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/\n\n---\n\n---\n\n/g, '\n\n---\n\n')
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\n\n---\n\n---\n\n/g, "\n\n---\n\n")
     .trim();
 }
 
@@ -446,10 +493,10 @@ export function findContextFiles(startDir?: string): string[] {
 
   // Files to look for
   const contextFileNames = [
-    'AGENTS.md',
-    'CLAUDE.md',
-    '.claude/CLAUDE.md',
-    '.claude/AGENTS.md'
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".claude/CLAUDE.md",
+    ".claude/AGENTS.md",
   ];
 
   // Search in current directory and parent directories
@@ -482,14 +529,14 @@ export function loadContextFromFiles(files: string[]): string {
 
   for (const file of files) {
     try {
-      const content = compactOmcStartupGuidance(readFileSync(file, 'utf-8'));
+      const content = compactOmcStartupGuidance(readFileSync(file, "utf-8"));
       contexts.push(`## Context from ${file}\n\n${content}`);
     } catch (error) {
       console.warn(`Warning: Could not read context file ${file}:`, error);
     }
   }
 
-  return contexts.join('\n\n---\n\n');
+  return contexts.join("\n\n---\n\n");
 }
 
 /**
@@ -497,261 +544,289 @@ export function loadContextFromFiles(files: string[]): string {
  */
 export function generateConfigSchema(): object {
   return {
-    $schema: 'http://json-schema.org/draft-07/schema#',
-    title: 'Oh-My-ClaudeCode Configuration',
-    type: 'object',
+    $schema: "http://json-schema.org/draft-07/schema#",
+    title: "Oh-My-ClaudeCode Configuration",
+    type: "object",
     properties: {
       agents: {
-        type: 'object',
-        description: 'Agent model and feature configuration',
+        type: "object",
+        description: "Agent model and feature configuration",
         properties: {
           omc: {
-            type: 'object',
+            type: "object",
             properties: {
-              model: { type: 'string', description: 'Model ID for the main orchestrator' }
-            }
+              model: {
+                type: "string",
+                description: "Model ID for the main orchestrator",
+              },
+            },
           },
           explore: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           analyst: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           planner: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           architect: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           debugger: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           executor: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           verifier: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           securityReviewer: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           codeReviewer: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           testEngineer: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           designer: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           writer: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           qaTester: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           scientist: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           tracer: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           gitMaster: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           codeSimplifier: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           critic: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
+            type: "object",
+            properties: { model: { type: "string" } },
           },
           documentSpecialist: {
-            type: 'object',
-            properties: { model: { type: 'string' } }
-          }
-        }
+            type: "object",
+            properties: { model: { type: "string" } },
+          },
+        },
       },
       features: {
-        type: 'object',
-        description: 'Feature toggles',
+        type: "object",
+        description: "Feature toggles",
         properties: {
-          parallelExecution: { type: 'boolean', default: true },
-          lspTools: { type: 'boolean', default: true },
-          astTools: { type: 'boolean', default: true },
-          continuationEnforcement: { type: 'boolean', default: true },
-          autoContextInjection: { type: 'boolean', default: true }
-        }
+          parallelExecution: { type: "boolean", default: true },
+          lspTools: { type: "boolean", default: true },
+          astTools: { type: "boolean", default: true },
+          continuationEnforcement: { type: "boolean", default: true },
+          autoContextInjection: { type: "boolean", default: true },
+        },
       },
       mcpServers: {
-        type: 'object',
-        description: 'MCP server configurations',
+        type: "object",
+        description: "MCP server configurations",
         properties: {
           exa: {
-            type: 'object',
+            type: "object",
             properties: {
-              enabled: { type: 'boolean' },
-              apiKey: { type: 'string' }
-            }
+              enabled: { type: "boolean" },
+              apiKey: { type: "string" },
+            },
           },
           context7: {
-            type: 'object',
-            properties: { enabled: { type: 'boolean' } }
-          }
-        }
+            type: "object",
+            properties: { enabled: { type: "boolean" } },
+          },
+        },
       },
       permissions: {
-        type: 'object',
-        description: 'Permission settings',
+        type: "object",
+        description: "Permission settings",
         properties: {
-          allowBash: { type: 'boolean', default: true },
-          allowEdit: { type: 'boolean', default: true },
-          allowWrite: { type: 'boolean', default: true },
-          maxBackgroundTasks: { type: 'integer', default: 5, minimum: 1, maximum: 50 }
-        }
+          allowBash: { type: "boolean", default: true },
+          allowEdit: { type: "boolean", default: true },
+          allowWrite: { type: "boolean", default: true },
+          maxBackgroundTasks: {
+            type: "integer",
+            default: 5,
+            minimum: 1,
+            maximum: 50,
+          },
+        },
       },
       magicKeywords: {
-        type: 'object',
-        description: 'Magic keyword triggers',
+        type: "object",
+        description: "Magic keyword triggers",
         properties: {
-          ultrawork: { type: 'array', items: { type: 'string' } },
-          search: { type: 'array', items: { type: 'string' } },
-          analyze: { type: 'array', items: { type: 'string' } },
-          ultrathink: { type: 'array', items: { type: 'string' } }
-        }
+          ultrawork: { type: "array", items: { type: "string" } },
+          search: { type: "array", items: { type: "string" } },
+          analyze: { type: "array", items: { type: "string" } },
+          ultrathink: { type: "array", items: { type: "string" } },
+        },
       },
       routing: {
-        type: 'object',
-        description: 'Intelligent model routing configuration',
-        properties: {
-          enabled: { type: 'boolean', default: true, description: 'Enable intelligent model routing' },
-          defaultTier: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH'], default: 'MEDIUM', description: 'Default tier when no rules match' },
-          forceInherit: { type: 'boolean', default: false, description: 'Force all agents to inherit the parent model, bypassing OMC model routing. When true, no model parameter is passed to Task calls, so agents use the user\'s Claude Code model setting. Auto-enabled for non-Claude providers (CC Switch, custom ANTHROPIC_BASE_URL), AWS Bedrock, and Google Vertex AI.' },
-        }
-      },
-      externalModels: {
-        type: 'object',
-        description: 'External model provider configuration (Codex, Gemini)',
-        properties: {
-          defaults: {
-            type: 'object',
-            description: 'Default model settings for external providers',
-            properties: {
-              provider: {
-                type: 'string',
-                enum: ['codex', 'gemini'],
-                description: 'Default external provider'
-              },
-              codexModel: {
-                type: 'string',
-                default: BUILTIN_EXTERNAL_MODEL_DEFAULTS.codexModel,
-                description: 'Default Codex model'
-              },
-              geminiModel: {
-                type: 'string',
-                default: BUILTIN_EXTERNAL_MODEL_DEFAULTS.geminiModel,
-                description: 'Default Gemini model'
-              }
-            }
-          },
-          rolePreferences: {
-            type: 'object',
-            description: 'Provider/model preferences by agent role',
-            additionalProperties: {
-              type: 'object',
-              properties: {
-                provider: { type: 'string', enum: ['codex', 'gemini'] },
-                model: { type: 'string' }
-              },
-              required: ['provider', 'model']
-            }
-          },
-          taskPreferences: {
-            type: 'object',
-            description: 'Provider/model preferences by task type',
-            additionalProperties: {
-              type: 'object',
-              properties: {
-                provider: { type: 'string', enum: ['codex', 'gemini'] },
-                model: { type: 'string' }
-              },
-              required: ['provider', 'model']
-            }
-          },
-          fallbackPolicy: {
-            type: 'object',
-            description: 'Fallback behavior on model failure',
-            properties: {
-              onModelFailure: {
-                type: 'string',
-                enum: ['provider_chain', 'cross_provider', 'claude_only'],
-                default: 'provider_chain',
-                description: 'Fallback strategy when a model fails'
-              },
-              allowCrossProvider: {
-                type: 'boolean',
-                default: false,
-                description: 'Allow fallback to a different provider'
-              },
-              crossProviderOrder: {
-                type: 'array',
-                items: { type: 'string', enum: ['codex', 'gemini'] },
-                default: ['codex', 'gemini'],
-                description: 'Order of providers for cross-provider fallback'
-              }
-            }
-          }
-        }
-      },
-      delegationRouting: {
-        type: 'object',
-        description: 'Delegation routing configuration for external model providers (opt-in feature)',
+        type: "object",
+        description: "Intelligent model routing configuration",
         properties: {
           enabled: {
-            type: 'boolean',
+            type: "boolean",
+            default: true,
+            description: "Enable intelligent model routing",
+          },
+          defaultTier: {
+            type: "string",
+            enum: ["LOW", "MEDIUM", "HIGH"],
+            default: "MEDIUM",
+            description: "Default tier when no rules match",
+          },
+          forceInherit: {
+            type: "boolean",
             default: false,
-            description: 'Enable delegation routing to external providers (Codex, Gemini)'
+            description:
+              "Force all agents to inherit the parent model, bypassing OMC model routing. When true, no model parameter is passed to Task calls, so agents use the user's Claude Code model setting. Auto-enabled for non-Claude providers (CC Switch, custom ANTHROPIC_BASE_URL), AWS Bedrock, and Google Vertex AI.",
+          },
+        },
+      },
+      externalModels: {
+        type: "object",
+        description: "External model provider configuration (Codex, Gemini)",
+        properties: {
+          defaults: {
+            type: "object",
+            description: "Default model settings for external providers",
+            properties: {
+              provider: {
+                type: "string",
+                enum: ["codex", "gemini"],
+                description: "Default external provider",
+              },
+              codexModel: {
+                type: "string",
+                default: BUILTIN_EXTERNAL_MODEL_DEFAULTS.codexModel,
+                description: "Default Codex model",
+              },
+              geminiModel: {
+                type: "string",
+                default: BUILTIN_EXTERNAL_MODEL_DEFAULTS.geminiModel,
+                description: "Default Gemini model",
+              },
+            },
+          },
+          rolePreferences: {
+            type: "object",
+            description: "Provider/model preferences by agent role",
+            additionalProperties: {
+              type: "object",
+              properties: {
+                provider: { type: "string", enum: ["codex", "gemini"] },
+                model: { type: "string" },
+              },
+              required: ["provider", "model"],
+            },
+          },
+          taskPreferences: {
+            type: "object",
+            description: "Provider/model preferences by task type",
+            additionalProperties: {
+              type: "object",
+              properties: {
+                provider: { type: "string", enum: ["codex", "gemini"] },
+                model: { type: "string" },
+              },
+              required: ["provider", "model"],
+            },
+          },
+          fallbackPolicy: {
+            type: "object",
+            description: "Fallback behavior on model failure",
+            properties: {
+              onModelFailure: {
+                type: "string",
+                enum: ["provider_chain", "cross_provider", "claude_only"],
+                default: "provider_chain",
+                description: "Fallback strategy when a model fails",
+              },
+              allowCrossProvider: {
+                type: "boolean",
+                default: false,
+                description: "Allow fallback to a different provider",
+              },
+              crossProviderOrder: {
+                type: "array",
+                items: { type: "string", enum: ["codex", "gemini"] },
+                default: ["codex", "gemini"],
+                description: "Order of providers for cross-provider fallback",
+              },
+            },
+          },
+        },
+      },
+      delegationRouting: {
+        type: "object",
+        description:
+          "Delegation routing configuration for external model providers (opt-in feature)",
+        properties: {
+          enabled: {
+            type: "boolean",
+            default: false,
+            description:
+              "Enable delegation routing to external providers (Codex, Gemini)",
           },
           defaultProvider: {
-            type: 'string',
-            enum: ['claude', 'codex', 'gemini'],
-            default: 'claude',
-            description: 'Default provider for delegation routing when no specific role mapping exists'
+            type: "string",
+            enum: ["claude", "codex", "gemini"],
+            default: "claude",
+            description:
+              "Default provider for delegation routing when no specific role mapping exists",
           },
           roles: {
-            type: 'object',
-            description: 'Provider mappings by agent role',
+            type: "object",
+            description: "Provider mappings by agent role",
             additionalProperties: {
-              type: 'object',
+              type: "object",
               properties: {
-                provider: { type: 'string', enum: ['claude', 'codex', 'gemini'] },
-                tool: { type: 'string', enum: ['Task'] },
-                model: { type: 'string' },
-                agentType: { type: 'string' },
-                fallback: { type: 'array', items: { type: 'string' } }
+                provider: {
+                  type: "string",
+                  enum: ["claude", "codex", "gemini"],
+                },
+                tool: { type: "string", enum: ["Task"] },
+                model: { type: "string" },
+                agentType: { type: "string" },
+                fallback: { type: "array", items: { type: "string" } },
               },
-              required: ['provider', 'tool']
-            }
-          }
-        }
-      }
-    }
+              required: ["provider", "tool"],
+            },
+          },
+        },
+      },
+    },
   };
 }
