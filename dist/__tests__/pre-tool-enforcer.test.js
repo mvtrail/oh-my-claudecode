@@ -12,7 +12,17 @@ function runPreToolEnforcerWithEnv(input, env = {}) {
         input: JSON.stringify(input),
         encoding: 'utf-8',
         timeout: 5000,
-        env: { ...process.env, NODE_ENV: 'test', ...env },
+        env: {
+            ...process.env,
+            NODE_ENV: 'test',
+            // Reset Bedrock/routing env vars so tests are isolated from the host environment.
+            // Tests that exercise Bedrock model-routing behaviour set these explicitly via `env`.
+            OMC_ROUTING_FORCE_INHERIT: '',
+            OMC_SUBAGENT_MODEL: '',
+            CLAUDE_MODEL: '',
+            ANTHROPIC_MODEL: '',
+            ...env,
+        },
     });
     return JSON.parse(stdout.trim());
 }
@@ -380,6 +390,333 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
         });
         const hookOutput = output.hookSpecificOutput;
         expect(hookOutput.permissionDecisionReason).toContain('MODEL ROUTING');
+    });
+    // === Agent definition model routing (issue: subagent_type bare-model-id on Bedrock) ===
+    it('denies Agent call with subagent_type whose definition has a bare Anthropic model ID when forceInherit is enabled', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:critic',
+                description: 'Review spec',
+                prompt: 'Review this spec',
+            },
+            cwd: tempDir,
+            session_id: 'session-agent-def-model',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+        });
+        const hookOutput = output.hookSpecificOutput;
+        expect(output.continue).toBe(true);
+        expect(hookOutput.permissionDecision).toBe('deny');
+        expect(hookOutput.permissionDecisionReason).toContain('[MODEL ROUTING]');
+        expect(hookOutput.permissionDecisionReason).toContain('claude-opus-4-6');
+    });
+    it('denies Task call with subagent_type whose definition has a bare Anthropic model ID when forceInherit is enabled', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Task',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:executor',
+                description: 'Implement feature',
+                prompt: 'Do the thing',
+            },
+            cwd: tempDir,
+            session_id: 'session-task-def-model',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+        });
+        const hookOutput = output.hookSpecificOutput;
+        expect(output.continue).toBe(true);
+        expect(hookOutput.permissionDecision).toBe('deny');
+        expect(hookOutput.permissionDecisionReason).toContain('[MODEL ROUTING]');
+    });
+    it('deny message includes the bare model from the definition and suggests the tier alias', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:critic',
+                description: 'Review spec',
+                prompt: 'Review this spec',
+            },
+            cwd: tempDir,
+            session_id: 'session-deny-message',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+        });
+        const reason = output.hookSpecificOutput.permissionDecisionReason;
+        expect(reason).toContain('claude-opus-4-6');
+        expect(reason).toContain('opus'); // tier alias suggestion
+        expect(reason).toContain('global.anthropic.claude-sonnet-4-6'); // OMC_SUBAGENT_MODEL routing
+    });
+    it('allows tier alias with OMC_SUBAGENT_MODEL set (escape hatch for denied subagent_type calls)', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:critic',
+                model: 'opus',
+                description: 'Review spec',
+                prompt: 'Review this spec',
+            },
+            cwd: tempDir,
+            session_id: 'session-tier-alias-escape',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+        });
+        expect(output.continue).toBe(true);
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
+    });
+    it('still blocks tier alias when OMC_SUBAGENT_MODEL is not configured', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:critic',
+                model: 'opus',
+                description: 'Review spec',
+                prompt: 'Review this spec',
+            },
+            cwd: tempDir,
+            session_id: 'session-tier-alias-no-subagent-model',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: '',
+        });
+        const hookOutput = output.hookSpecificOutput;
+        expect(hookOutput.permissionDecision).toBe('deny');
+        expect(hookOutput.permissionDecisionReason).toContain('MODEL ROUTING');
+    });
+    it('does NOT deny subagent_type call when forceInherit is disabled', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:critic',
+                description: 'Review spec',
+                prompt: 'Review this spec',
+            },
+            cwd: tempDir,
+            session_id: 'session-no-force-inherit',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'false',
+            OMC_SUBAGENT_MODEL: '',
+        });
+        expect(output.continue).toBe(true);
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
+    });
+    it('does not throw or deny when subagent_type is a non-string value', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 42,
+                description: 'Some task',
+                prompt: 'Do something',
+            },
+            cwd: tempDir,
+            session_id: 'session-non-string-subagent-type',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+        });
+        expect(output.continue).toBe(true);
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
+    });
+    it('treats path-traversal subagent_type as unknown agent and does not deny', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:../docs/CLAUDE',
+                description: 'Some task',
+                prompt: 'Do something',
+            },
+            cwd: tempDir,
+            session_id: 'session-path-traversal',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+        });
+        expect(output.continue).toBe(true);
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
+    });
+    it('falls back to script-relative agents dir when CLAUDE_PLUGIN_ROOT points to a non-existent path', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:critic',
+                description: 'Review spec',
+                prompt: 'Review this spec',
+            },
+            cwd: tempDir,
+            session_id: 'session-stale-plugin-root',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+            CLAUDE_PLUGIN_ROOT: '/nonexistent/path/that/does/not/exist',
+        });
+        // Despite stale CLAUDE_PLUGIN_ROOT, falls back to script-relative agents dir and detects bare model
+        const hookOutput = output.hookSpecificOutput;
+        expect(output.continue).toBe(true);
+        expect(hookOutput.permissionDecision).toBe('deny');
+        expect(hookOutput.permissionDecisionReason).toContain('[MODEL ROUTING]');
+        expect(hookOutput.permissionDecisionReason).toContain('claude-opus-4-6');
+    });
+    it('falls back to script-relative agents dir when CLAUDE_PLUGIN_ROOT/agents exists but lacks the specific agent file', () => {
+        // CLAUDE_PLUGIN_ROOT/agents/ exists (non-empty check passes) but does not contain critic.md
+        const pluginRoot = join(tempDir, 'partial-plugin');
+        const pluginAgentsDir = join(pluginRoot, 'agents');
+        mkdirSync(pluginAgentsDir, { recursive: true });
+        // Write a different agent file so the dir exists but critic.md is absent
+        writeFileSync(join(pluginAgentsDir, 'other-agent.md'), '---\nname: other\n---\nBody.');
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:critic',
+                description: 'Review spec',
+                prompt: 'Review this spec',
+            },
+            cwd: tempDir,
+            session_id: 'session-partial-plugin',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+            CLAUDE_PLUGIN_ROOT: pluginRoot,
+        });
+        // Should fall back to script-relative agents/, find critic.md, and deny on bare model ID
+        const hookOutput = output.hookSpecificOutput;
+        expect(output.continue).toBe(true);
+        expect(hookOutput.permissionDecision).toBe('deny');
+        expect(hookOutput.permissionDecisionReason).toContain('[MODEL ROUTING]');
+        expect(hookOutput.permissionDecisionReason).toContain('claude-opus-4-6');
+    });
+    it('does not deny when model: appears inside a body --- block (not real frontmatter)', () => {
+        // File starts with normal text, then a horizontal-rule --- section containing model:
+        const pluginRoot = join(tempDir, 'fake-plugin-body-hr');
+        const agentsDir = join(pluginRoot, 'agents');
+        mkdirSync(agentsDir, { recursive: true });
+        writeFileSync(join(agentsDir, 'body-hr-agent.md'), 'Some introductory text.\n\n---\nmodel: claude-opus-4-6\n---\n\nMore body text.');
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:body-hr-agent',
+                description: 'Some task',
+                prompt: 'Do something',
+            },
+            cwd: tempDir,
+            session_id: 'session-body-hr-model',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+            CLAUDE_PLUGIN_ROOT: pluginRoot,
+        });
+        // A mid-body --- block is not frontmatter; must not trigger a deny
+        expect(output.continue).toBe(true);
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
+    });
+    it('does not deny when model: appears only in the agent body (not frontmatter)', () => {
+        // Frontmatter has no model key; body text contains "model: claude-opus-4-6"
+        const pluginRoot = join(tempDir, 'fake-plugin-body');
+        const agentsDir = join(pluginRoot, 'agents');
+        mkdirSync(agentsDir, { recursive: true });
+        writeFileSync(join(agentsDir, 'body-model-agent.md'), '---\nname: body-model-agent\n---\nThis agent can spawn sub-agents.\nmodel: claude-opus-4-6 is sometimes used in the body text.');
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:body-model-agent',
+                description: 'Some task',
+                prompt: 'Do something',
+            },
+            cwd: tempDir,
+            session_id: 'session-body-model',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+            CLAUDE_PLUGIN_ROOT: pluginRoot,
+        });
+        // model: in the body must not trigger a deny — frontmatter has no model field
+        expect(output.continue).toBe(true);
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
+    });
+    it('strips surrounding quotes from quoted YAML model values and still denies bare Anthropic IDs', () => {
+        // Create a temporary agent definition with a quoted model scalar
+        const pluginRoot = join(tempDir, 'fake-plugin');
+        const agentsDir = join(pluginRoot, 'agents');
+        mkdirSync(agentsDir, { recursive: true });
+        writeFileSync(join(agentsDir, 'quoted-model-agent.md'), '---\nname: quoted-model-agent\nmodel: "claude-opus-4-6"\n---\nAgent body.');
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:quoted-model-agent',
+                description: 'Review spec',
+                prompt: 'Review this spec',
+            },
+            cwd: tempDir,
+            session_id: 'session-quoted-model',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+            CLAUDE_PLUGIN_ROOT: pluginRoot,
+        });
+        // Quoted model "claude-opus-4-6" must be stripped of quotes before the safety check
+        const hookOutput = output.hookSpecificOutput;
+        expect(output.continue).toBe(true);
+        expect(hookOutput.permissionDecision).toBe('deny');
+        expect(hookOutput.permissionDecisionReason).toContain('[MODEL ROUTING]');
+        expect(hookOutput.permissionDecisionReason).toContain('claude-opus-4-6');
+    });
+    it('allows a valid provider-specific model ID written with YAML quotes', () => {
+        // Same setup but model is a valid Bedrock ID — should NOT be denied
+        const pluginRoot = join(tempDir, 'fake-plugin-2');
+        const agentsDir = join(pluginRoot, 'agents');
+        mkdirSync(agentsDir, { recursive: true });
+        writeFileSync(join(agentsDir, 'bedrock-quoted-agent.md'), '---\nname: bedrock-quoted-agent\nmodel: "global.anthropic.claude-sonnet-4-6"\n---\nAgent body.');
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:bedrock-quoted-agent',
+                description: 'Do something',
+                prompt: 'Do it',
+            },
+            cwd: tempDir,
+            session_id: 'session-bedrock-quoted',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+            CLAUDE_PLUGIN_ROOT: pluginRoot,
+        });
+        expect(output.continue).toBe(true);
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
+    });
+    it('does NOT deny Agent call without subagent_type in forceInherit mode (normal inheritance unchanged)', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                description: 'Some task',
+                prompt: 'Do something',
+            },
+            cwd: tempDir,
+            session_id: 'session-no-subagent-type',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+        });
+        expect(output.continue).toBe(true);
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
+    });
+    it('does NOT deny when subagent_type refers to an unknown agent (no definition file)', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:nonexistent-agent-xyz',
+                description: 'Some task',
+                prompt: 'Do something',
+            },
+            cwd: tempDir,
+            session_id: 'session-unknown-agent',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+        });
+        expect(output.continue).toBe(true);
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
     });
     it('does not write skill-active-state for unknown custom skills', () => {
         const sessionId = 'session-1581';

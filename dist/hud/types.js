@@ -56,6 +56,7 @@ export const DEFAULT_HUD_CONFIG = {
         showTokens: false,
         useBars: false, // Disabled by default for backwards compatibility
         showCallCounts: true, // Show tool/agent/skill call counts by default (Issue #710)
+        callCountsFormat: 'auto', // Preserve platform-based emoji/ASCII defaults unless explicitly overridden
         showLastTool: false,
         sessionSummary: false, // Disabled by default - opt-in AI-generated session summary
         maxOutputLines: 4,

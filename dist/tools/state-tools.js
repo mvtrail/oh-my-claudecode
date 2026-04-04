@@ -22,9 +22,10 @@ const STATE_TOOL_MODES = [
     'ralplan',
     'omc-teams',
     'deep-interview',
-    'self-improve'
+    'self-improve',
+    'skill-active'
 ];
-const EXTRA_STATE_ONLY_MODES = ['ralplan', 'omc-teams', 'deep-interview', 'self-improve'];
+const EXTRA_STATE_ONLY_MODES = ['ralplan', 'omc-teams', 'deep-interview', 'self-improve', 'skill-active'];
 const CANCEL_SIGNAL_TTL_MS = 30_000;
 function readTeamNamesFromStateFile(statePath) {
     if (!existsSync(statePath))

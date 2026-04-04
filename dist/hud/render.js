@@ -316,7 +316,7 @@ export async function render(context, config) {
     }
     const showCounts = enabledElements.showCallCounts ?? true;
     if (showCounts) {
-        const counts = renderCallCounts(context.toolCallCount, context.agentCallCount, context.skillCallCount);
+        const counts = renderCallCounts(context.toolCallCount, context.agentCallCount, context.skillCallCount, enabledElements.callCountsFormat ?? 'auto');
         if (counts)
             rendered.set("callCounts", counts);
     }

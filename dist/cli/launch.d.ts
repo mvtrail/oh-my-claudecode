@@ -2,6 +2,7 @@
  * Native tmux shell launch for omc
  * Launches Claude Code with tmux session management
  */
+export declare function prepareOmcLaunchConfigDir(baseConfigDir?: string): string;
 /**
  * Extract the OMC-specific --notify flag from launch args.
  * --notify false  → disable notifications (OMC_NOTIFY=0)

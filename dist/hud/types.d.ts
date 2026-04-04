@@ -314,6 +314,7 @@ export type CwdFormat = 'relative' | 'absolute' | 'folder';
  * - full: raw model ID like 'claude-opus-4-6-20260205'
  */
 export type ModelFormat = 'short' | 'versioned' | 'full';
+export type CallCountsFormat = 'auto' | 'emoji' | 'ascii';
 export interface HudElementConfig {
     cwd: boolean;
     cwdFormat: CwdFormat;
@@ -349,6 +350,7 @@ export interface HudElementConfig {
     showTokens?: boolean;
     useBars: boolean;
     showCallCounts?: boolean;
+    callCountsFormat?: CallCountsFormat;
     showLastTool?: boolean;
     sessionSummary: boolean;
     maxOutputLines: number;
