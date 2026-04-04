@@ -175,7 +175,12 @@ function estimateContextPercent(transcriptPath) {
 function getGuardFilePath(sessionId) {
   const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
   const guardDir = join(configDir, 'projects', '.omc-guards');
-  mkdirSync(guardDir, { recursive: true, mode: 0o700 });
+  try {
+    mkdirSync(guardDir, { recursive: true, mode: 0o700 });
+  } catch (err) {
+    // On Windows, concurrent hooks can throw EEXIST even with recursive:true
+    if (err?.code !== 'EEXIST') throw err;
+  }
   return join(guardDir, `context-guard-${sessionId}.json`);
 }
 

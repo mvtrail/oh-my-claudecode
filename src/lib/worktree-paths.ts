@@ -235,7 +235,13 @@ export function ensureOmcDir(relativePath: string, worktreeRoot?: string): strin
   const fullPath = resolveOmcPath(relativePath, worktreeRoot);
 
   if (!existsSync(fullPath)) {
-    mkdirSync(fullPath, { recursive: true });
+    try {
+      mkdirSync(fullPath, { recursive: true });
+    } catch (err) {
+      // On Windows, concurrent hooks can race past the existsSync check and
+      // throw EEXIST. Safe to ignore — see atomic-write.ts:ensureDirSync.
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
   }
 
   return fullPath;
@@ -311,7 +317,13 @@ export function ensureAllOmcDirs(worktreeRoot?: string): void {
   for (const subdir of subdirs) {
     const fullPath = subdir ? join(omcRoot, subdir) : omcRoot;
     if (!existsSync(fullPath)) {
-      mkdirSync(fullPath, { recursive: true });
+      try {
+        mkdirSync(fullPath, { recursive: true });
+      } catch (err) {
+        // On Windows, concurrent hooks can race past the existsSync check and
+        // throw EEXIST. Safe to ignore — see atomic-write.ts:ensureDirSync.
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
     }
   }
 }
@@ -497,7 +509,13 @@ export function ensureSessionStateDir(sessionId: string, worktreeRoot?: string):
   const sessionDir = getSessionStateDir(sessionId, worktreeRoot);
 
   if (!existsSync(sessionDir)) {
-    mkdirSync(sessionDir, { recursive: true });
+    try {
+      mkdirSync(sessionDir, { recursive: true });
+    } catch (err) {
+      // On Windows, concurrent hooks can race past the existsSync check and
+      // throw EEXIST. Safe to ignore — see atomic-write.ts:ensureDirSync.
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
   }
 
   return sessionDir;
