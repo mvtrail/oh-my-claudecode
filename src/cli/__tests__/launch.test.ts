@@ -856,11 +856,15 @@ describe('prepareOmcLaunchConfigDir / launchCommand OMC companion loading', () =
   const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
   let tempRoot: string | null = null;
 
+  const originalClaudeCode = process.env.CLAUDECODE;
+
   beforeEach(() => {
     vi.resetAllMocks();
     tempRoot = mkdtempSync(join(tmpdir(), 'omc-launch-profile-'));
     (execFileSync as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(''));
     (resolveLaunchPolicy as ReturnType<typeof vi.fn>).mockReturnValue('direct');
+    // Clear CLAUDECODE to avoid "already inside CC session" exit
+    delete process.env.CLAUDECODE;
   });
 
   afterEach(() => {
@@ -872,6 +876,11 @@ describe('prepareOmcLaunchConfigDir / launchCommand OMC companion loading', () =
       delete process.env.CLAUDE_CONFIG_DIR;
     } else {
       process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+    }
+    if (originalClaudeCode === undefined) {
+      delete process.env.CLAUDECODE;
+    } else {
+      process.env.CLAUDECODE = originalClaudeCode;
     }
   });
 

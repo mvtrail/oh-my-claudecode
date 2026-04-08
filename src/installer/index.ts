@@ -575,6 +575,44 @@ export function cleanupStaleAgents(log: (msg: string) => void): string[] {
 }
 
 /**
+ * Remove standalone agent files that duplicate plugin-provided agents (#2252).
+ *
+ * When the plugin is the canonical agent source, standalone copies in
+ * ~/.claude/agents/ from a prior `omc setup` cause agent definitions to
+ * appear twice. Removes standalone copies with OMC frontmatter whose
+ * filename matches a current package agent.
+ */
+export function prunePluginDuplicateAgents(log: (msg: string) => void): string[] {
+  if (!existsSync(AGENTS_DIR)) return [];
+
+  const currentAgentFiles = new Set(
+    Object.keys(loadAgentDefinitions()),
+  );
+
+  const removed: string[] = [];
+  for (const file of readdirSync(AGENTS_DIR)) {
+    if (!file.endsWith('.md')) continue;
+    if (file === 'AGENTS.md') continue;
+    // Only prune agents whose name matches a current package agent
+    if (!currentAgentFiles.has(file)) continue;
+
+    const filepath = join(AGENTS_DIR, file);
+    try {
+      const content = readFileSync(filepath, 'utf-8');
+      if (content.startsWith('---\n') && /^name:\s+\S+/m.test(content)) {
+        unlinkSync(filepath);
+        removed.push(file);
+        log(`  Pruned plugin-duplicate agent: ${file}`);
+      }
+    } catch {
+      // Skip files that can't be read
+    }
+  }
+
+  return removed;
+}
+
+/**
  * Remove stale OMC-created skill directories from the config skills directory.
  *
  * Similar to cleanupStaleAgents but for skill directories. Removes directories
@@ -622,6 +660,75 @@ export function cleanupStaleSkills(log: (msg: string) => void): string[] {
         rmSync(join(SKILLS_DIR, entry.name), { recursive: true, force: true });
         removed.push(entry.name);
         log(`  Removed stale skill: ${entry.name}/`);
+      }
+    } catch {
+      // Skip directories that can't be read
+    }
+  }
+
+  return removed;
+}
+
+/**
+ * Remove standalone skill directories that duplicate plugin-provided skills.
+ *
+ * When the plugin is the canonical skill source, standalone copies in
+ * ~/.claude/skills/ from a prior `omc setup` cause every command to appear
+ * twice (#2252). This function removes standalone copies whose SKILL.md
+ * content-hashes match any installed plugin version, preserving user-authored
+ * skills that happen to share a name.
+ */
+export function prunePluginDuplicateSkills(log: (msg: string) => void): string[] {
+  if (!existsSync(SKILLS_DIR)) return [];
+
+  const packageSkillsDir = join(getPackageDir(), 'skills');
+  if (!existsSync(packageSkillsDir)) return [];
+
+  // Build set of plugin-provided skill names (both dir name and safe standalone name)
+  const pluginSkillNames = new Set<string>();
+  // Build map of skill name → content hash from the package for safety comparison
+  const pluginSkillHashes = new Map<string, string>();
+
+  for (const entry of readdirSync(packageSkillsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    pluginSkillNames.add(entry.name);
+
+    const skillMdPath = join(packageSkillsDir, entry.name, 'SKILL.md');
+    if (existsSync(skillMdPath)) {
+      const content = readFileSync(skillMdPath, 'utf-8');
+      const { metadata } = parseFrontmatter(content);
+      if (typeof metadata.name === 'string' && metadata.name.trim().length > 0) {
+        pluginSkillNames.add(toSafeStandaloneSkillName(metadata.name));
+      }
+      // Store a simple content hash for safety comparison
+      pluginSkillHashes.set(entry.name, content.trim());
+    }
+  }
+
+  const removed: string[] = [];
+  for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name === 'omc-learned' || entry.name === '.omc-trash') continue;
+
+    // Only prune skills whose name matches a plugin-provided skill
+    if (!pluginSkillNames.has(entry.name)) continue;
+
+    const skillMdPath = join(SKILLS_DIR, entry.name, 'SKILL.md');
+    if (!existsSync(skillMdPath)) continue;
+
+    try {
+      const standaloneContent = readFileSync(skillMdPath, 'utf-8').trim();
+
+      // Safety check: only remove if the standalone content matches the plugin's
+      // copy (or looks like standard OMC frontmatter). This preserves user-authored
+      // skills that happen to share a name with a plugin skill.
+      const pluginContent = pluginSkillHashes.get(entry.name);
+      const isOmcCreated = standaloneContent.startsWith('---\n') && /^name:\s+\S+/m.test(standaloneContent);
+
+      if (pluginContent === standaloneContent || isOmcCreated) {
+        rmSync(join(SKILLS_DIR, entry.name), { recursive: true, force: true });
+        removed.push(entry.name);
+        log(`  Pruned plugin-duplicate skill: ${entry.name}/`);
       }
     } catch {
       // Skip directories that can't be read
@@ -1163,6 +1270,11 @@ export function install(options: InstallOptions = {}): InstallResult {
         }
       } else {
         log('Skipping legacy agent file installation (plugin-provided agents are available)');
+        // Remove standalone copies that duplicate plugin-provided agents (#2252)
+        const prunedAgents = prunePluginDuplicateAgents(log);
+        if (prunedAgents.length > 0) {
+          log(`Pruned ${prunedAgents.length} duplicate standalone agent(s)`);
+        }
       }
 
       // Clean up stale OMC-created agents from previous versions
@@ -1227,6 +1339,11 @@ export function install(options: InstallOptions = {}): InstallResult {
       }));
     } else if (pluginProvidesSkillFiles) {
       log('Skipping bundled skill installation (plugin-provided skills are available). Use --no-plugin to force local skill sync.');
+      // Remove standalone copies that duplicate plugin-provided skills (#2252)
+      const prunedSkills = prunePluginDuplicateSkills(log);
+      if (prunedSkills.length > 0) {
+        log(`Pruned ${prunedSkills.length} duplicate standalone skill(s)`);
+      }
     } else if (runningAsPlugin) {
       log('Skipping bundled skill installation (managed by plugin system)');
     }

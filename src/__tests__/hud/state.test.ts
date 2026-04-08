@@ -18,6 +18,10 @@ vi.mock("node:os", () => ({
   homedir: () => "/Users/testuser",
 }));
 
+vi.mock("../../utils/config-dir.js", () => ({
+  getClaudeConfigDir: () => "/Users/testuser/.claude",
+}));
+
 import { existsSync, readFileSync } from "node:fs";
 import { atomicWriteFileSync } from "../../lib/atomic-write.js";
 const mockExistsSync = vi.mocked(existsSync);

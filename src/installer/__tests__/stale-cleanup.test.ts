@@ -14,7 +14,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 // We test the exported cleanup functions directly
-import { cleanupStaleAgents, cleanupStaleSkills } from '../index.js';
+import { cleanupStaleAgents, cleanupStaleSkills, prunePluginDuplicateSkills, prunePluginDuplicateAgents } from '../index.js';
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -231,5 +231,185 @@ describe('cleanupStaleSkills', () => {
 
     expect(removed).not.toContain('random-directory');
     expect(existsSync(randomDir)).toBe(true);
+  });
+});
+
+// ── Plugin Duplicate Skill Pruning (#2252) ──────────────────────────────────
+
+describe('prunePluginDuplicateSkills', () => {
+  let tempDir: string;
+  let originalConfigDir: string | undefined;
+  const log = vi.fn();
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'omc-prune-dupes-'));
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = tempDir;
+    log.mockClear();
+  });
+
+  afterEach(() => {
+    if (originalConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('removes standalone skills that match plugin-provided skills', async () => {
+    vi.resetModules();
+    const { prunePluginDuplicateSkills: prune, SKILLS_DIR: skillsDir } = await import('../index.js');
+
+    mkdirSync(skillsDir, { recursive: true });
+
+    // Create a standalone copy of 'ralph' (which the plugin also provides)
+    createSkillDir(skillsDir, 'ralph', 'ralph');
+
+    const removed = prune(log);
+
+    expect(removed).toContain('ralph');
+    expect(existsSync(join(skillsDir, 'ralph'))).toBe(false);
+  });
+
+  it('preserves user-authored skills without OMC frontmatter even if name matches', async () => {
+    vi.resetModules();
+    const { prunePluginDuplicateSkills: prune, SKILLS_DIR: skillsDir } = await import('../index.js');
+
+    mkdirSync(skillsDir, { recursive: true });
+
+    // User-created skill with a name that collides with plugin skill but no OMC frontmatter
+    createUserSkillDir(skillsDir, 'ralph');
+
+    const removed = prune(log);
+
+    expect(removed).not.toContain('ralph');
+    expect(existsSync(join(skillsDir, 'ralph'))).toBe(true);
+  });
+
+  it('preserves omc-learned directory', async () => {
+    vi.resetModules();
+    const { prunePluginDuplicateSkills: prune, SKILLS_DIR: skillsDir } = await import('../index.js');
+
+    mkdirSync(skillsDir, { recursive: true });
+    createSkillDir(skillsDir, 'omc-learned', 'omc-learned');
+
+    const removed = prune(log);
+
+    expect(removed).not.toContain('omc-learned');
+    expect(existsSync(join(skillsDir, 'omc-learned'))).toBe(true);
+  });
+
+  it('does not remove skills whose name does not match any plugin skill', async () => {
+    vi.resetModules();
+    const { prunePluginDuplicateSkills: prune, SKILLS_DIR: skillsDir } = await import('../index.js');
+
+    mkdirSync(skillsDir, { recursive: true });
+    createSkillDir(skillsDir, 'my-private-skill', 'my-private-skill');
+
+    const removed = prune(log);
+
+    expect(removed).not.toContain('my-private-skill');
+    expect(existsSync(join(skillsDir, 'my-private-skill'))).toBe(true);
+  });
+
+  it('returns empty when skills directory does not exist', () => {
+    const removed = prunePluginDuplicateSkills(log);
+    expect(removed).toEqual([]);
+  });
+
+  it('is idempotent — second run is a no-op', async () => {
+    vi.resetModules();
+    const { prunePluginDuplicateSkills: prune, SKILLS_DIR: skillsDir } = await import('../index.js');
+
+    mkdirSync(skillsDir, { recursive: true });
+    createSkillDir(skillsDir, 'ralph', 'ralph');
+
+    const first = prune(log);
+    expect(first).toContain('ralph');
+
+    const second = prune(log);
+    expect(second).toEqual([]);
+  });
+});
+
+// ── Plugin Duplicate Agent Pruning (#2252) ──────────────────────────────────
+
+describe('prunePluginDuplicateAgents', () => {
+  let tempDir: string;
+  let originalConfigDir: string | undefined;
+  const log = vi.fn();
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'omc-prune-agent-dupes-'));
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = tempDir;
+    log.mockClear();
+  });
+
+  afterEach(() => {
+    if (originalConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('removes standalone agents that match plugin-provided agents', async () => {
+    vi.resetModules();
+    const { prunePluginDuplicateAgents: prune, AGENTS_DIR: agentsDir } = await import('../index.js');
+
+    mkdirSync(agentsDir, { recursive: true });
+    createAgentFile(agentsDir, 'architect.md', 'architect');
+
+    const removed = prune(log);
+
+    expect(removed).toContain('architect.md');
+    expect(existsSync(join(agentsDir, 'architect.md'))).toBe(false);
+  });
+
+  it('preserves user-created agents without OMC frontmatter', async () => {
+    vi.resetModules();
+    const { prunePluginDuplicateAgents: prune, AGENTS_DIR: agentsDir } = await import('../index.js');
+
+    mkdirSync(agentsDir, { recursive: true });
+    createUserFile(agentsDir, 'architect.md');
+
+    const removed = prune(log);
+
+    expect(removed).not.toContain('architect.md');
+    expect(existsSync(join(agentsDir, 'architect.md'))).toBe(true);
+  });
+
+  it('does not remove agents not in the current package', async () => {
+    vi.resetModules();
+    const { prunePluginDuplicateAgents: prune, AGENTS_DIR: agentsDir } = await import('../index.js');
+
+    mkdirSync(agentsDir, { recursive: true });
+    createAgentFile(agentsDir, 'my-custom-agent.md', 'my-custom-agent');
+
+    const removed = prune(log);
+
+    expect(removed).not.toContain('my-custom-agent.md');
+    expect(existsSync(join(agentsDir, 'my-custom-agent.md'))).toBe(true);
+  });
+
+  it('preserves AGENTS.md documentation file', async () => {
+    vi.resetModules();
+    const { prunePluginDuplicateAgents: prune, AGENTS_DIR: agentsDir } = await import('../index.js');
+
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(join(agentsDir, 'AGENTS.md'), '# Agent Catalog\nDocumentation.\n');
+
+    const removed = prune(log);
+
+    expect(removed).not.toContain('AGENTS.md');
+    expect(existsSync(join(agentsDir, 'AGENTS.md'))).toBe(true);
+  });
+
+  it('returns empty when agents directory does not exist', () => {
+    const removed = prunePluginDuplicateAgents(log);
+    expect(removed).toEqual([]);
   });
 });
