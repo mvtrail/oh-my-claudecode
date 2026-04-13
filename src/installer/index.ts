@@ -820,6 +820,12 @@ export function hasPluginProvidedSkillFiles(): boolean {
   );
 }
 
+export function hasPluginProvidedHookFiles(): boolean {
+  return getInstalledOmcPluginRoots().some(pluginRoot =>
+    existsSync(join(pluginRoot, 'hooks', 'hooks.json'))
+  );
+}
+
 export function hasEnabledOmcPlugin(): boolean {
   if (process.env.CLAUDE_PLUGIN_ROOT?.trim()) {
     return true;
@@ -1214,6 +1220,7 @@ export function install(options: InstallOptions = {}): InstallResult {
   const projectScoped = isProjectScopedPlugin();
   const pluginProvidesAgentFiles = hasPluginProvidedAgentFiles();
   const pluginProvidesSkillFiles = hasPluginProvidedSkillFiles();
+  const pluginProvidesHookFiles = hasPluginProvidedHookFiles();
   const enabledOmcPlugin = hasEnabledOmcPlugin();
   // Dev plugin-dir mode: user launched OMC via `claude --plugin-dir <path>` or
   // `omc --plugin-dir <path>`. The plugin already exposes agents/skills at runtime,
@@ -1348,7 +1355,14 @@ export function install(options: InstallOptions = {}): InstallResult {
       // Standalone installs still need ~/.claude/hooks/* scripts because their
       // settings.json hook entries execute those local paths directly. Plugin installs
       // keep using hooks/hooks.json + scripts/ under CLAUDE_PLUGIN_ROOT.
-      ensureStandaloneHookScripts(log);
+      // Skip when the plugin already provides hooks AND is enabled to prevent
+      // duplicate firing (#2252). If the plugin is disabled, standalone scripts
+      // are still needed for settings.json hook entries to work at runtime.
+      if (!(pluginProvidesHookFiles && enabledOmcPlugin)) {
+        ensureStandaloneHookScripts(log);
+      } else {
+        log('Skipping standalone hook scripts (plugin-provided hooks are available)');
+      }
       result.hooksConfigured = true; // Will be set properly after consolidated settings.json write
     } else {
       log('Skipping agent/command/hook files (managed by plugin system)');
@@ -1494,7 +1508,11 @@ export function install(options: InstallOptions = {}): InstallResult {
           log(`  Cleaned up ${legacyRemoved} legacy hook entries from settings.json`);
         }
 
-        const shouldConfigureSettingsHooks = !runningAsPlugin || allowPluginHookRefresh;
+        // Skip writing hooks to settings.json when the plugin provides hooks via
+        // hooks.json — the legacy cleanup above already removed stale OMC entries,
+        // and re-adding them would cause duplicate hook firing (#2252).
+        const pluginHandlesHooks = pluginProvidesHookFiles && enabledOmcPlugin;
+        const shouldConfigureSettingsHooks = (!runningAsPlugin || allowPluginHookRefresh) && !pluginHandlesHooks;
         if (shouldConfigureSettingsHooks) {
           const desiredHooks = getHooksSettingsConfig().hooks as Record<string, HookGroup[]>;
 
