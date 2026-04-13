@@ -28,6 +28,16 @@ const LOCK_TIMEOUT_MS = 2_000;
 const LOCK_RETRY_MS = 20;
 const LOCK_STALE_MS = 10_000;
 
+/**
+ * How long after a terminal-state event (stop/session-end) to suppress
+ * late lifecycle events for the same {projectPath}::{tmuxSession} scope.
+ *
+ * Chosen to be long enough to absorb hook-ordering races (sub-process startup
+ * delays, detach/re-attach timing) while being short enough not to swallow
+ * genuinely new sessions that start shortly after a cleanup.
+ */
+export const TERMINAL_STATE_SUPPRESSION_WINDOW_MS = 60_000;
+
 const SLEEP_ARRAY = new Int32Array(new SharedArrayBuffer(4));
 
 interface DedupeStateRecord {
@@ -267,9 +277,6 @@ function buildDescriptor(
         windowMs: STOP_WINDOW_MS,
       };
     default:
-      if (signal.routeKey === "pull-request.created" || signal.routeKey === "test.failed") {
-        return null;
-      }
       return null;
   }
 }
@@ -282,6 +289,55 @@ function pruneState(state: DedupeState, nowMs: number): void {
       delete state.records[key];
     }
   }
+}
+
+/**
+ * Terminal-state record keys that suppress late lifecycle noise.
+ *
+ * session.stopped  = a `stop` (idle) event fired for this scope
+ * session.finished = a `session-end` event fired for this scope
+ */
+const TERMINAL_KEYS = ["session.stopped", "session.finished"] as const;
+
+/**
+ * Returns true when `event` is a late lifecycle event that has been rendered
+ * obsolete by a prior terminal-state record in `state`.
+ *
+ * Guards:
+ *   - session-start arriving after session.stopped or session.finished → suppress
+ *   - stop arriving after session.finished → suppress
+ *
+ * The check window is TERMINAL_STATE_SUPPRESSION_WINDOW_MS.  Obsolete events
+ * must NOT update dedupe state so the terminal record stays alive for further
+ * suppression checks within the same window.
+ */
+export function isObsoleteAfterTerminalState(
+  event: OpenClawHookEvent,
+  state: DedupeState,
+  tmuxSession: string,
+  projectPath: string,
+  nowMs: number,
+): boolean {
+  if (event !== "session-start" && event !== "stop") {
+    return false;
+  }
+
+  const scope = `${projectPath}::${tmuxSession}`;
+
+  // stop is only suppressed by session.finished (the harder terminal state);
+  // a prior stop alone does not suppress another stop.
+  const keysToCheck: readonly string[] =
+    event === "session-start" ? TERMINAL_KEYS : (["session.finished"] as const);
+
+  return keysToCheck.some((prefix) => {
+    const record = state.records[`${prefix}::${scope}`];
+    if (!record) return false;
+    const lastSeenMs = Date.parse(record.lastSeenAt);
+    return (
+      Number.isFinite(lastSeenMs) &&
+      nowMs - lastSeenMs < TERMINAL_STATE_SUPPRESSION_WINDOW_MS
+    );
+  });
 }
 
 export function shouldCollapseOpenClawBurst(
@@ -304,6 +360,14 @@ export function shouldCollapseOpenClawBurst(
     const state = readState(projectPath);
     const nowMs = Date.now();
     pruneState(state, nowMs);
+
+    // Freshness/terminal-state suppression: drop late lifecycle events that
+    // arrive after the session has already reached a terminal state.
+    // Do NOT update dedupe state here so the terminal record stays alive for
+    // further suppression checks within the window.
+    if (isObsoleteAfterTerminalState(event, state, tmuxSession, projectPath, nowMs)) {
+      return true;
+    }
 
     const nowIso = new Date(nowMs).toISOString();
     const existing = state.records[descriptor.key];

@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { getOmcRoot } from '../../lib/worktree-paths.js';
+import { getOmcRoot, getWorktreeRoot } from '../../lib/worktree-paths.js';
 import { getClaudeConfigDir } from '../../utils/config-dir.js';
 
 export interface PermissionRequestInput {
@@ -32,15 +32,14 @@ export interface HookOutput {
 
 const SAFE_PATTERNS = [
   /^git (status|diff|log|branch|show|fetch)/,
-  /^npm (test|run (test|lint|build|check|typecheck))/,
-  /^pnpm (test|run (test|lint|build|check|typecheck))/,
-  /^yarn (test|run (test|lint|build|check|typecheck))/,
+  /^npm run (lint|build|check|typecheck)/,
+  /^pnpm (lint|build|check|typecheck|run (lint|build|check|typecheck))/,
+  /^yarn (lint|build|check|typecheck|run (lint|build|check|typecheck))/,
   /^tsc( |$)/,
+  /^gh (issue|pr) (view|list|status)\b/,
   /^eslint /,
   /^prettier /,
-  /^cargo (test|check|clippy|build)/,
-  /^pytest/,
-  /^python -m pytest/,
+  /^cargo (check|clippy|build)/,
   /^ls( |$)/,
   // REMOVED: cat, head, tail - they allow reading arbitrary files
 ];
@@ -63,6 +62,18 @@ const SAFE_HEREDOC_PATTERNS = [
   /^git commit\b/,
   /^git tag\b/,
 ];
+
+const SAFE_RIPGREP_FLAGS = new Set([
+  '-n',
+  '--line-number',
+  '-S',
+  '--smart-case',
+  '-F',
+  '--fixed-strings',
+  '-i',
+  '--ignore-case',
+  '--no-heading',
+]);
 
 const BACKGROUND_MUTATION_SUBAGENTS = new Set([
   'executor',
@@ -247,13 +258,294 @@ export function getBackgroundBashPermissionFallback(
     return { shouldFallback: true, missingTools: ['Bash'] };
   }
 
-  if (isSafeCommand(command) || isHeredocWithSafeBase(command)) {
+  if (isSafeAutoApprovedCommand(command, directory)) {
     return { shouldFallback: false, missingTools: [] };
   }
 
   return hasClaudePermissionApproval(directory, 'Bash', command)
     ? { shouldFallback: false, missingTools: [] }
     : { shouldFallback: true, missingTools: ['Bash'] };
+}
+
+function tokenizeShellCommand(command: string): string[] | null {
+  const tokens: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+
+  for (const char of command.trim()) {
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (quote) {
+    return null;
+  }
+
+  if (current) {
+    tokens.push(current);
+  }
+
+  return tokens.length > 0 ? tokens : null;
+}
+
+function isSensitiveRepoRelativePath(repoRelativePath: string): boolean {
+  const normalized = repoRelativePath.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!normalized || normalized === '.') {
+    return false;
+  }
+
+  return (
+    normalized === '.git' ||
+    normalized.startsWith('.git/') ||
+    normalized.includes('/.git/') ||
+    normalized === '.ssh' ||
+    normalized.startsWith('.ssh/') ||
+    normalized.includes('/.ssh/') ||
+    normalized === 'secrets' ||
+    normalized.startsWith('secrets/') ||
+    normalized.includes('/secrets/') ||
+    normalized === '.env' ||
+    normalized.startsWith('.env.') ||
+    normalized.includes('/.env') ||
+    normalized.includes('/.env.') ||
+    normalized === 'node_modules/.cache' ||
+    normalized.startsWith('node_modules/.cache/') ||
+    normalized.includes('/node_modules/.cache/')
+  );
+}
+
+function isSafeRepoPath(
+  cwd: string,
+  inputPath: string,
+  options: { allowDirectory?: boolean; requireExisting?: boolean } = {},
+): boolean {
+  const { allowDirectory = false, requireExisting = true } = options;
+  if (!inputPath) {
+    return false;
+  }
+
+  const worktreeRoot = getWorktreeRoot(cwd);
+  if (!worktreeRoot) {
+    return false;
+  }
+  const resolvedPath = path.resolve(cwd, inputPath);
+
+  let canonicalPath = resolvedPath;
+  const exists = fs.existsSync(resolvedPath);
+
+  if (exists) {
+    try {
+      canonicalPath = fs.realpathSync(resolvedPath);
+    } catch {
+      return false;
+    }
+  } else if (requireExisting) {
+    return false;
+  }
+
+  const relativePath = path.relative(worktreeRoot, canonicalPath);
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return false;
+  }
+
+  if (!relativePath || relativePath === '.') {
+    return allowDirectory;
+  }
+
+  if (isSensitiveRepoRelativePath(relativePath)) {
+    return false;
+  }
+
+  if (!allowDirectory && exists) {
+    try {
+      if (fs.statSync(resolvedPath).isDirectory()) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areSafeRepoPaths(
+  cwd: string,
+  args: string[],
+  options: { allowDirectory?: boolean; requireExisting?: boolean } = {},
+): boolean {
+  const pathArgs = args.filter(arg => arg !== '--');
+  return pathArgs.length > 0 && pathArgs.every(arg => !arg.startsWith('-') && isSafeRepoPath(cwd, arg, options));
+}
+
+function isSafeCatCommand(tokens: string[], cwd: string): boolean {
+  return tokens[0] === 'cat' && areSafeRepoPaths(cwd, tokens.slice(1));
+}
+
+function isSafeHeadOrTailCommand(tokens: string[], cwd: string): boolean {
+  if (tokens[0] !== 'head' && tokens[0] !== 'tail') {
+    return false;
+  }
+
+  let index = 1;
+  if (tokens[index] === '-n') {
+    index += 2;
+  } else if (/^-n\d+$/.test(tokens[index] ?? '')) {
+    index += 1;
+  }
+
+  return areSafeRepoPaths(cwd, tokens.slice(index));
+}
+
+function isSafeSedInspectionCommand(tokens: string[], cwd: string): boolean {
+  if (tokens[0] !== 'sed' || tokens[1] !== '-n') {
+    return false;
+  }
+
+  const script = tokens[2];
+  if (!script || !/^\d+(,\d+)?p$/.test(script)) {
+    return false;
+  }
+
+  return areSafeRepoPaths(cwd, tokens.slice(3));
+}
+
+function isSafeRipgrepInspectionCommand(tokens: string[], cwd: string): boolean {
+  if (tokens[0] !== 'rg') {
+    return false;
+  }
+
+  let index = 1;
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (token === '--') {
+      index += 1;
+      break;
+    }
+    if (!token.startsWith('-')) {
+      break;
+    }
+    if (!SAFE_RIPGREP_FLAGS.has(token)) {
+      return false;
+    }
+    index += 1;
+  }
+
+  const pattern = tokens[index];
+  if (!pattern || pattern.startsWith('-')) {
+    return false;
+  }
+
+  const searchPaths = tokens.slice(index + 1);
+  return areSafeRepoPaths(cwd, searchPaths, { allowDirectory: false });
+}
+
+function isSafeTargetedVitestCommand(tokens: string[], cwd: string): boolean {
+  const supportedPrefixes: string[][] = [
+    ['vitest', 'run'],
+    ['pnpm', 'vitest', 'run'],
+    ['yarn', 'vitest', 'run'],
+  ];
+
+  const matchedPrefix = supportedPrefixes.find(prefix =>
+    prefix.every((part, index) => tokens[index] === part),
+  );
+
+  if (!matchedPrefix) {
+    return false;
+  }
+
+  const remaining = tokens.slice(matchedPrefix.length);
+  return remaining.length === 1 && isSafeRepoPath(cwd, remaining[0], { allowDirectory: false });
+}
+
+function isSafeTargetedPackageManagerTestCommand(tokens: string[], cwd: string): boolean {
+  const supportedPrefixes: string[][] = [
+    ['npm', 'test', '--', '--run'],
+    ['npm', 'run', 'test', '--', '--run'],
+    ['pnpm', 'test', '--', '--run'],
+    ['pnpm', 'run', 'test', '--', '--run'],
+    ['yarn', 'test', '--run'],
+  ];
+
+  const matchedPrefix = supportedPrefixes.find(prefix =>
+    prefix.every((part, index) => tokens[index] === part),
+  );
+
+  if (!matchedPrefix) {
+    return false;
+  }
+
+  const remaining = tokens.slice(matchedPrefix.length);
+  return remaining.length === 1 && isSafeRepoPath(cwd, remaining[0], { allowDirectory: false });
+}
+
+function isSafeTargetedNodeTestCommand(tokens: string[], cwd: string): boolean {
+  return tokens[0] === 'node'
+    && tokens[1] === '--test'
+    && tokens.length === 3
+    && isSafeRepoPath(cwd, tokens[2], { allowDirectory: false });
+}
+
+export function isSafeRepoInspectionCommand(command: string, cwd: string): boolean {
+  const trimmed = command.trim();
+  if (!trimmed || DANGEROUS_SHELL_CHARS.test(trimmed)) {
+    return false;
+  }
+
+  const tokens = tokenizeShellCommand(trimmed);
+  if (!tokens) {
+    return false;
+  }
+
+  return isSafeCatCommand(tokens, cwd)
+    || isSafeHeadOrTailCommand(tokens, cwd)
+    || isSafeSedInspectionCommand(tokens, cwd)
+    || isSafeRipgrepInspectionCommand(tokens, cwd);
+}
+
+export function isSafeTargetedLocalTestCommand(command: string, cwd: string): boolean {
+  const trimmed = command.trim();
+  if (!trimmed || DANGEROUS_SHELL_CHARS.test(trimmed)) {
+    return false;
+  }
+
+  const tokens = tokenizeShellCommand(trimmed);
+  if (!tokens) {
+    return false;
+  }
+
+  return isSafeTargetedVitestCommand(tokens, cwd)
+    || isSafeTargetedPackageManagerTestCommand(tokens, cwd)
+    || isSafeTargetedNodeTestCommand(tokens, cwd);
+}
+
+export function isSafeAutoApprovedCommand(command: string, cwd: string): boolean {
+  return isSafeCommand(command)
+    || isSafeRepoInspectionCommand(command, cwd)
+    || isSafeTargetedLocalTestCommand(command, cwd)
+    || isHeredocWithSafeBase(command);
 }
 
 /**
@@ -361,29 +653,17 @@ export function processPermissionRequest(input: PermissionRequestInput): HookOut
   const shouldAskBashPermission = hasClaudePermissionAsk(input.cwd, 'Bash', command);
 
   // Auto-allow safe commands
-  if (!shouldAskBashPermission && isSafeCommand(command)) {
+  if (!shouldAskBashPermission && isSafeAutoApprovedCommand(command, input.cwd)) {
+    const reason = isHeredocWithSafeBase(command)
+      ? 'Safe command with heredoc content'
+      : 'Safe read-only or test command';
     return {
       continue: true,
       hookSpecificOutput: {
         hookEventName: 'PermissionRequest',
         decision: {
           behavior: 'allow',
-          reason: 'Safe read-only or test command',
-        },
-      },
-    };
-  }
-
-  // Auto-allow heredoc commands with safe base commands (Issue #608)
-  // This prevents the full heredoc body from being stored in settings.local.json
-  if (!shouldAskBashPermission && isHeredocWithSafeBase(command)) {
-    return {
-      continue: true,
-      hookSpecificOutput: {
-        hookEventName: 'PermissionRequest',
-        decision: {
-          behavior: 'allow',
-          reason: 'Safe command with heredoc content',
+          reason,
         },
       },
     };

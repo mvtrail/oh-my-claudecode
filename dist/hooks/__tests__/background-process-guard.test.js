@@ -78,7 +78,7 @@ describe('Background Process Guard (issue #302)', () => {
             };
             const result = await processHook('pre-tool-use', input);
             expect(result.continue).toBe(true);
-            expect(mockedAddBackgroundTask).toHaveBeenCalledWith(expect.stringContaining('task-'), 'test task', 'executor', resolvedDirectory);
+            expect(mockedAddBackgroundTask).toHaveBeenCalledWith(expect.stringContaining('task-'), 'test task', 'executor', resolvedDirectory, 'test-session');
         });
         it('should block background Task when at limit', async () => {
             writeClaudePermissions(['Edit', 'Write']);
@@ -128,7 +128,7 @@ describe('Background Process Guard (issue #302)', () => {
             };
             const result = await processHook('pre-tool-use', input);
             expect(result.continue).toBe(true);
-            expect(mockedAddBackgroundTask).toHaveBeenCalledWith(expect.stringContaining('task-'), 'test task', 'executor', resolvedDirectory);
+            expect(mockedAddBackgroundTask).toHaveBeenCalledWith(expect.stringContaining('task-'), 'test task', 'executor', resolvedDirectory, 'test-session');
         });
         it('should track only background Task invocations with the hook tool_use_id', async () => {
             writeClaudePermissions(['Edit', 'Write']);
@@ -145,7 +145,7 @@ describe('Background Process Guard (issue #302)', () => {
             };
             const result = await processHook('pre-tool-use', input);
             expect(result.continue).toBe(true);
-            expect(mockedAddBackgroundTask).toHaveBeenCalledWith('tool-use-123', 'inspect code', 'explore', resolvedDirectory);
+            expect(mockedAddBackgroundTask).toHaveBeenCalledWith('tool-use-123', 'inspect code', 'explore', resolvedDirectory, 'test-session');
         });
         it('should block executor background Task when Edit/Write are not pre-approved', async () => {
             const input = {
@@ -214,7 +214,7 @@ describe('Background Process Guard (issue #302)', () => {
             };
             const result = await processHook('pre-tool-use', input);
             expect(result.continue).toBe(true);
-            expect(mockedAddBackgroundTask).toHaveBeenCalledWith('tool-use-bg-1', 'background executor task', 'executor', resolvedDirectory);
+            expect(mockedAddBackgroundTask).toHaveBeenCalledWith('tool-use-bg-1', 'background executor task', 'executor', resolvedDirectory, 'test-session');
         });
         it('tracks foreground Task invocations with the stable hook id when available', async () => {
             const input = {
@@ -229,7 +229,7 @@ describe('Background Process Guard (issue #302)', () => {
             };
             const result = await processHook('pre-tool-use', input);
             expect(result.continue).toBe(true);
-            expect(mockedAddBackgroundTask).toHaveBeenCalledWith('tool-use-fg-1', 'foreground task', 'executor', resolvedDirectory);
+            expect(mockedAddBackgroundTask).toHaveBeenCalledWith('tool-use-fg-1', 'foreground task', 'executor', resolvedDirectory, 'test-session');
         });
         it('remaps background Task launch id to async agent id after successful launch', async () => {
             const input = {
@@ -245,7 +245,7 @@ describe('Background Process Guard (issue #302)', () => {
             };
             const result = await processHook('post-tool-use', input);
             expect(result.continue).toBe(true);
-            expect(mockedRemapBackgroundTaskId).toHaveBeenCalledWith('tool-use-bg-2', 'a8de3dd', resolvedDirectory);
+            expect(mockedRemapBackgroundTaskId).toHaveBeenCalledWith('tool-use-bg-2', 'a8de3dd', resolvedDirectory, 'test-session');
             expect(mockedCompleteBackgroundTask).not.toHaveBeenCalled();
             expect(mockedRemapMostRecentMatchingBackgroundTaskId).not.toHaveBeenCalled();
         });
@@ -263,7 +263,7 @@ describe('Background Process Guard (issue #302)', () => {
             };
             const result = await processHook('post-tool-use', input);
             expect(result.continue).toBe(true);
-            expect(mockedCompleteBackgroundTask).toHaveBeenCalledWith('tool-use-bg-3', resolvedDirectory, true);
+            expect(mockedCompleteBackgroundTask).toHaveBeenCalledWith('tool-use-bg-3', resolvedDirectory, true, 'test-session');
         });
         it('completes background tasks on TaskOutput completion', async () => {
             const input = {
@@ -274,7 +274,7 @@ describe('Background Process Guard (issue #302)', () => {
             };
             const result = await processHook('post-tool-use', input);
             expect(result.continue).toBe(true);
-            expect(mockedCompleteBackgroundTask).toHaveBeenCalledWith('a8de3dd', resolvedDirectory, false);
+            expect(mockedCompleteBackgroundTask).toHaveBeenCalledWith('a8de3dd', resolvedDirectory, false, 'test-session');
         });
         it('fails background tasks on TaskOutput error status', async () => {
             const input = {
@@ -285,7 +285,7 @@ describe('Background Process Guard (issue #302)', () => {
             };
             const result = await processHook('post-tool-use', input);
             expect(result.continue).toBe(true);
-            expect(mockedCompleteBackgroundTask).toHaveBeenCalledWith('a8de3dd', resolvedDirectory, true);
+            expect(mockedCompleteBackgroundTask).toHaveBeenCalledWith('a8de3dd', resolvedDirectory, true, 'test-session');
         });
         it('completes fallback generated Task tracking by description when no tool_use_id is present', async () => {
             const input = {
@@ -300,7 +300,7 @@ describe('Background Process Guard (issue #302)', () => {
             };
             const result = await processHook('post-tool-use', input);
             expect(result.continue).toBe(true);
-            expect(mockedCompleteMostRecentMatchingBackgroundTask).toHaveBeenCalledWith('foreground task', resolvedDirectory, false, 'executor');
+            expect(mockedCompleteMostRecentMatchingBackgroundTask).toHaveBeenCalledWith('foreground task', resolvedDirectory, false, 'executor', 'test-session');
         });
     });
     describe('Bash tool with run_in_background=true', () => {
@@ -310,7 +310,7 @@ describe('Background Process Guard (issue #302)', () => {
                 sessionId: 'test-session',
                 toolName: 'Bash',
                 toolInput: {
-                    command: 'npm test',
+                    command: 'npm run lint',
                     run_in_background: true,
                 },
                 directory: '/tmp/test',
@@ -352,7 +352,7 @@ describe('Background Process Guard (issue #302)', () => {
                 sessionId: 'test-session',
                 toolName: 'Bash',
                 toolInput: {
-                    command: 'npm test',
+                    command: 'npm run lint',
                     run_in_background: true,
                 },
                 directory: '/tmp/test',
@@ -362,6 +362,96 @@ describe('Background Process Guard (issue #302)', () => {
             expect(result.message ?? '').not.toContain('[BACKGROUND PERMISSIONS]');
             expect(result.modifiedInput).toBeUndefined();
         });
+        it('should keep repo-scoped inspection Bash commands in background', async () => {
+            const relativeRoot = 'tmp-bg-readonly';
+            const repoDir = join(resolvedDirectory, relativeRoot);
+            mkdirSync(join(repoDir, 'src'), { recursive: true });
+            writeFileSync(join(repoDir, 'src', 'sample.ts'), 'export const value = 1;\n');
+            try {
+                const input = {
+                    sessionId: 'test-session',
+                    toolName: 'Bash',
+                    toolInput: {
+                        command: `cat ${relativeRoot}/src/sample.ts`,
+                        run_in_background: true,
+                    },
+                    directory: resolvedDirectory,
+                };
+                const result = await processHook('pre-tool-use', input);
+                expect(result.continue).toBe(true);
+                expect(result.message ?? '').not.toContain('[BACKGROUND PERMISSIONS]');
+            }
+            finally {
+                rmSync(repoDir, { recursive: true, force: true });
+            }
+        });
+        it('should block repo-scoped inspection Bash commands from non-git temp dirs', async () => {
+            const nonGitDir = mkdtempSync(join(tmpdir(), 'omc-bg-readonly-non-git-'));
+            mkdirSync(join(nonGitDir, 'src'), { recursive: true });
+            writeFileSync(join(nonGitDir, 'src', 'sample.ts'), 'export const value = 1;\n');
+            try {
+                const input = {
+                    sessionId: 'test-session',
+                    toolName: 'Bash',
+                    toolInput: {
+                        command: 'cat src/sample.ts',
+                        run_in_background: true,
+                    },
+                    directory: nonGitDir,
+                };
+                const result = await processHook('pre-tool-use', input);
+                expect(result.continue).toBe(false);
+                expect(result.reason).toContain('[BACKGROUND PERMISSIONS]');
+            }
+            finally {
+                rmSync(nonGitDir, { recursive: true, force: true });
+            }
+        });
+        it('should keep single-test Bash commands in background', async () => {
+            const relativeRoot = 'tmp-bg-testcmd';
+            const repoDir = join(resolvedDirectory, relativeRoot);
+            mkdirSync(join(repoDir, 'src', '__tests__'), { recursive: true });
+            writeFileSync(join(repoDir, 'src', '__tests__', 'sample.test.ts'), 'test("x", () => {});\n');
+            try {
+                const input = {
+                    sessionId: 'test-session',
+                    toolName: 'Bash',
+                    toolInput: {
+                        command: `vitest run ${relativeRoot}/src/__tests__/sample.test.ts`,
+                        run_in_background: true,
+                    },
+                    directory: resolvedDirectory,
+                };
+                const result = await processHook('pre-tool-use', input);
+                expect(result.continue).toBe(true);
+                expect(result.message ?? '').not.toContain('[BACKGROUND PERMISSIONS]');
+            }
+            finally {
+                rmSync(repoDir, { recursive: true, force: true });
+            }
+        });
+        it('should block single-test Bash commands from non-git temp dirs', async () => {
+            const nonGitDir = mkdtempSync(join(tmpdir(), 'omc-bg-testcmd-non-git-'));
+            mkdirSync(join(nonGitDir, 'src', '__tests__'), { recursive: true });
+            writeFileSync(join(nonGitDir, 'src', '__tests__', 'sample.test.ts'), 'test("x", () => {});\n');
+            try {
+                const input = {
+                    sessionId: 'test-session',
+                    toolName: 'Bash',
+                    toolInput: {
+                        command: 'vitest run src/__tests__/sample.test.ts',
+                        run_in_background: true,
+                    },
+                    directory: nonGitDir,
+                };
+                const result = await processHook('pre-tool-use', input);
+                expect(result.continue).toBe(false);
+                expect(result.reason).toContain('[BACKGROUND PERMISSIONS]');
+            }
+            finally {
+                rmSync(nonGitDir, { recursive: true, force: true });
+            }
+        });
         it('should block safe-looking background Bash when ask rules require approval', async () => {
             writeClaudePermissions([], ['Bash(git commit:*)']);
             const input = {
@@ -369,6 +459,20 @@ describe('Background Process Guard (issue #302)', () => {
                 toolName: 'Bash',
                 toolInput: {
                     command: `git commit -m "$(cat <<'EOF'\nfeat: test\nEOF\n)"`,
+                    run_in_background: true,
+                },
+                directory: '/tmp/test',
+            };
+            const result = await processHook('pre-tool-use', input);
+            expect(result.continue).toBe(false);
+            expect(result.reason).toContain('[BACKGROUND PERMISSIONS]');
+        });
+        it('should still block broad test commands in background without pre-approval', async () => {
+            const input = {
+                sessionId: 'test-session',
+                toolName: 'Bash',
+                toolInput: {
+                    command: 'npm test',
                     run_in_background: true,
                 },
                 directory: '/tmp/test',

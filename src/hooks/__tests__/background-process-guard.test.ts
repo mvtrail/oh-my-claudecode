@@ -420,7 +420,7 @@ describe('Background Process Guard (issue #302)', () => {
         sessionId: 'test-session',
         toolName: 'Bash',
         toolInput: {
-          command: 'npm test',
+          command: 'npm run lint',
           run_in_background: true,
         },
         directory: '/tmp/test',
@@ -469,7 +469,7 @@ describe('Background Process Guard (issue #302)', () => {
         sessionId: 'test-session',
         toolName: 'Bash',
         toolInput: {
-          command: 'npm test',
+          command: 'npm run lint',
           run_in_background: true,
         },
         directory: '/tmp/test',
@@ -481,6 +481,104 @@ describe('Background Process Guard (issue #302)', () => {
       expect(result.modifiedInput).toBeUndefined();
     });
 
+    it('should keep repo-scoped inspection Bash commands in background', async () => {
+      const relativeRoot = 'tmp-bg-readonly';
+      const repoDir = join(resolvedDirectory, relativeRoot);
+      mkdirSync(join(repoDir, 'src'), { recursive: true });
+      writeFileSync(join(repoDir, 'src', 'sample.ts'), 'export const value = 1;\n');
+
+      try {
+        const input: HookInput = {
+          sessionId: 'test-session',
+          toolName: 'Bash',
+          toolInput: {
+            command: `cat ${relativeRoot}/src/sample.ts`,
+            run_in_background: true,
+          },
+          directory: resolvedDirectory,
+        };
+
+        const result = await processHook('pre-tool-use', input);
+        expect(result.continue).toBe(true);
+        expect(result.message ?? '').not.toContain('[BACKGROUND PERMISSIONS]');
+      } finally {
+        rmSync(repoDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should block repo-scoped inspection Bash commands from non-git temp dirs', async () => {
+      const nonGitDir = mkdtempSync(join(tmpdir(), 'omc-bg-readonly-non-git-'));
+      mkdirSync(join(nonGitDir, 'src'), { recursive: true });
+      writeFileSync(join(nonGitDir, 'src', 'sample.ts'), 'export const value = 1;\n');
+
+      try {
+        const input: HookInput = {
+          sessionId: 'test-session',
+          toolName: 'Bash',
+          toolInput: {
+            command: 'cat src/sample.ts',
+            run_in_background: true,
+          },
+          directory: nonGitDir,
+        };
+
+        const result = await processHook('pre-tool-use', input);
+        expect(result.continue).toBe(false);
+        expect(result.reason).toContain('[BACKGROUND PERMISSIONS]');
+      } finally {
+        rmSync(nonGitDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should keep single-test Bash commands in background', async () => {
+      const relativeRoot = 'tmp-bg-testcmd';
+      const repoDir = join(resolvedDirectory, relativeRoot);
+      mkdirSync(join(repoDir, 'src', '__tests__'), { recursive: true });
+      writeFileSync(join(repoDir, 'src', '__tests__', 'sample.test.ts'), 'test("x", () => {});\n');
+
+      try {
+        const input: HookInput = {
+          sessionId: 'test-session',
+          toolName: 'Bash',
+          toolInput: {
+            command: `vitest run ${relativeRoot}/src/__tests__/sample.test.ts`,
+            run_in_background: true,
+          },
+          directory: resolvedDirectory,
+        };
+
+        const result = await processHook('pre-tool-use', input);
+        expect(result.continue).toBe(true);
+        expect(result.message ?? '').not.toContain('[BACKGROUND PERMISSIONS]');
+      } finally {
+        rmSync(repoDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should block single-test Bash commands from non-git temp dirs', async () => {
+      const nonGitDir = mkdtempSync(join(tmpdir(), 'omc-bg-testcmd-non-git-'));
+      mkdirSync(join(nonGitDir, 'src', '__tests__'), { recursive: true });
+      writeFileSync(join(nonGitDir, 'src', '__tests__', 'sample.test.ts'), 'test("x", () => {});\n');
+
+      try {
+        const input: HookInput = {
+          sessionId: 'test-session',
+          toolName: 'Bash',
+          toolInput: {
+            command: 'vitest run src/__tests__/sample.test.ts',
+            run_in_background: true,
+          },
+          directory: nonGitDir,
+        };
+
+        const result = await processHook('pre-tool-use', input);
+        expect(result.continue).toBe(false);
+        expect(result.reason).toContain('[BACKGROUND PERMISSIONS]');
+      } finally {
+        rmSync(nonGitDir, { recursive: true, force: true });
+      }
+    });
+
     it('should block safe-looking background Bash when ask rules require approval', async () => {
       writeClaudePermissions([], ['Bash(git commit:*)']);
 
@@ -489,6 +587,22 @@ describe('Background Process Guard (issue #302)', () => {
         toolName: 'Bash',
         toolInput: {
           command: `git commit -m "$(cat <<'EOF'\nfeat: test\nEOF\n)"`,
+          run_in_background: true,
+        },
+        directory: '/tmp/test',
+      };
+
+      const result = await processHook('pre-tool-use', input);
+      expect(result.continue).toBe(false);
+      expect(result.reason).toContain('[BACKGROUND PERMISSIONS]');
+    });
+
+    it('should still block broad test commands in background without pre-approval', async () => {
+      const input: HookInput = {
+        sessionId: 'test-session',
+        toolName: 'Bash',
+        toolInput: {
+          command: 'npm test',
           run_in_background: true,
         },
         directory: '/tmp/test',

@@ -118,7 +118,13 @@ function applyDeepInterviewRuntimeSettings(template) {
         '4. **Initialize state** via `state_write(mode="deep-interview")`:',
     ].join('\n'))
         .replace('"threshold": 0.2,', `"threshold": ${threshold},`)
-        .replace('We\'ll proceed to execution once ambiguity drops below 20%.', `We'll proceed to execution once ambiguity drops below ${percent}.`);
+        .replace('We\'ll proceed to execution once ambiguity drops below 20%.', `We'll proceed to execution once ambiguity drops below ${percent}.`)
+        // Fix #2545: replace remaining hardcoded 20%/0.2 references that conflict with runtime threshold injection
+        .replace('(default: 20%)', `(default: ${percent})`)
+        .replace('(default 0.2)', `(default ${threshold})`)
+        .replace('Gate: ≤20% ambiguity', `Gate: ≤${percent} ambiguity`)
+        .replace('(threshold: 20%).', `(threshold: ${percent}).`)
+        .replace('ambiguity ≤ 20%', `ambiguity ≤ ${percent}`);
 }
 /**
  * Load a single skill from a SKILL.md file

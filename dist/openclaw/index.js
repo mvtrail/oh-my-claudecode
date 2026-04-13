@@ -12,8 +12,10 @@ export { buildOpenClawSignal } from "./signal.js";
 import { getOpenClawConfig, resolveGateway } from "./config.js";
 import { wakeGateway, wakeCommandGateway, interpolateInstruction, isCommandGateway } from "./dispatcher.js";
 import { buildOpenClawSignal } from "./signal.js";
-import { basename } from "path";
+import { shouldCollapseOpenClawBurst } from "./dedupe.js";
+import { basename, join } from "path";
 import { getCurrentTmuxSession } from "../notifications/tmux.js";
+import { parseTmuxTail } from "../notifications/formatter.js";
 /** Whether debug logging is enabled */
 const DEBUG = process.env.OMC_OPENCLAW_DEBUG === "1";
 /**
@@ -72,20 +74,6 @@ export async function wakeOpenClaw(event, context) {
         const now = new Date().toISOString();
         // Auto-detect tmux session if not provided in context
         const tmuxSession = context.tmuxSession ?? getCurrentTmuxSession() ?? undefined;
-        // Auto-capture tmux pane content for stop/session-end events (best-effort)
-        let tmuxTail = context.tmuxTail;
-        if (!tmuxTail && (event === "stop" || event === "session-end") && process.env.TMUX) {
-            try {
-                const { capturePaneContent } = await import("../features/rate-limit-wait/tmux-detector.js");
-                const paneId = process.env.TMUX_PANE;
-                if (paneId) {
-                    tmuxTail = capturePaneContent(paneId, 15) ?? undefined;
-                }
-            }
-            catch {
-                // Non-blocking: tmux capture is best-effort
-            }
-        }
         // Read reply channel context from environment variables
         const replyChannel = context.replyChannel ?? process.env.OPENCLAW_REPLY_CHANNEL ?? undefined;
         const replyTarget = context.replyTarget ?? process.env.OPENCLAW_REPLY_TARGET ?? undefined;
@@ -98,6 +86,35 @@ export async function wakeOpenClaw(event, context) {
             ...(replyThread && { replyThread }),
         };
         const signal = buildOpenClawSignal(event, enrichedContext);
+        if (shouldCollapseOpenClawBurst(event, signal, enrichedContext, tmuxSession)) {
+            if (DEBUG) {
+                console.error(`[openclaw] deduped ${event} (${signal.routeKey}) for tmux session ${tmuxSession}`);
+            }
+            return { gateway: gatewayName, success: true, skipped: "deduped" };
+        }
+        // Auto-capture tmux pane content for stop/session-end events (best-effort).
+        // Uses delta-only capture to avoid re-alerting on stale pane history from
+        // already-resolved blockers (e.g. old "2 failed" / "exit 127" / "TS5055" lines).
+        let tmuxTail = context.tmuxTail;
+        if (!tmuxTail && (event === "stop" || event === "session-end") && process.env.TMUX) {
+            try {
+                const { getNewPaneTail } = await import("../features/rate-limit-wait/pane-fresh-capture.js");
+                const paneId = process.env.TMUX_PANE;
+                const projectPath = context.projectPath;
+                if (paneId && projectPath) {
+                    const stateDir = join(projectPath, ".omc", "state");
+                    const fresh = getNewPaneTail(paneId, stateDir, 15);
+                    tmuxTail = fresh || undefined;
+                }
+            }
+            catch {
+                // Non-blocking: tmux capture is best-effort
+            }
+        }
+        if (tmuxTail) {
+            const parsedTmuxTail = parseTmuxTail(tmuxTail, 15);
+            tmuxTail = parsedTmuxTail || undefined;
+        }
         // Build template variables from whitelisted context fields
         const variables = {
             sessionId: context.sessionId,

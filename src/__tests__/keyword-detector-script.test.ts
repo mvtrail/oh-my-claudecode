@@ -119,4 +119,48 @@ OMC Ultrawork = "특수부대 작전 반"
     expect(context).not.toContain('[MAGIC KEYWORD: ULTRAWORK]');
     expect(context).toBe('');
   });
+
+  // Regression: issue #2541 — review-seed echo must not trip code-review / security-review alerts
+  it('does not activate code-review when prompt is echoed review-instruction text with approve/request-changes/merge-ready', () => {
+    const prompt = [
+      'You are performing a code review of PR #2541.',
+      'Reply with exactly one verdict:',
+      '- approve',
+      '- request-changes',
+      '- merge-ready',
+    ].join('\n');
+    const output = runKeywordDetector(prompt);
+    const context = output.hookSpecificOutput?.additionalContext ?? '';
+
+    expect(output.continue).toBe(true);
+    expect(context).not.toContain('[MAGIC KEYWORD: CODE-REVIEW]');
+    expect(context).not.toContain('<code-review-mode>');
+    expect(context).toBe('');
+  });
+
+  it('does not activate security-review when prompt is echoed review-instruction text with approve/request-changes/blocked', () => {
+    const prompt = [
+      'You are performing a security review.',
+      'Choose one verdict:',
+      '- approve',
+      '- request-changes',
+      '- blocked',
+    ].join('\n');
+    const output = runKeywordDetector(prompt);
+    const context = output.hookSpecificOutput?.additionalContext ?? '';
+
+    expect(output.continue).toBe(true);
+    expect(context).not.toContain('[MAGIC KEYWORD: SECURITY-REVIEW]');
+    expect(context).not.toContain('<security-review-mode>');
+    expect(context).toBe('');
+  });
+
+  it('still activates code-review for a genuine user request (positive control)', () => {
+    const output = runKeywordDetector('code review this diff');
+    const context = output.hookSpecificOutput?.additionalContext ?? '';
+
+    expect(output.continue).toBe(true);
+    expect(context).toContain('<code-review-mode>');
+    expect(context).not.toContain('[MAGIC KEYWORD: CODE-REVIEW]');
+  });
 });

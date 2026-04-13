@@ -78,6 +78,10 @@ export interface PurgeCacheResult {
     removed: number;
     /** Paths that were removed */
     removedPaths: string[];
+    /** Number of stale version directories replaced with symlinks to the active version */
+    symlinked: number;
+    /** Paths that were converted to symlinks */
+    symlinkPaths: string[];
     /** Errors encountered (non-fatal) */
     errors: string[];
 }

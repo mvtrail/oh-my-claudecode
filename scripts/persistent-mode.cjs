@@ -25,6 +25,7 @@ const { execFileSync } = require("child_process");
 const { homedir } = require("os");
 const { join, dirname, resolve, normalize } = require("path");
 const { getClaudeConfigDir } = require("./lib/config-dir.cjs");
+const { resolveOmcStateRoot } = require("./lib/state-root.cjs");
 
 async function readStdin(timeoutMs = 2000) {
   return new Promise((resolve) => {
@@ -797,7 +798,8 @@ async function main() {
 
     const directory = data.cwd || data.directory || process.cwd();
     const sessionId = data.session_id || data.sessionId || "";
-    const stateDir = join(directory, ".omc", "state");
+    const omcRoot = await resolveOmcStateRoot(directory);
+    const stateDir = join(omcRoot, "state");
 
     // CRITICAL: Never block context-limit stops.
     // Blocking these causes a deadlock where Claude Code cannot compact.

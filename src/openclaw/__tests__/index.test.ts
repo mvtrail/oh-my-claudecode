@@ -3,10 +3,24 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+const execFileSyncMock = vi.hoisted(() => vi.fn());
+
+vi.mock("child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("child_process")>();
+  return {
+    ...actual,
+    execFileSync: execFileSyncMock,
+  };
+});
 
 const mockGetCurrentTmuxSession = vi.fn<() => string | null>(() => null);
 vi.mock("../../notifications/tmux.js", () => ({
   getCurrentTmuxSession: () => mockGetCurrentTmuxSession(),
+}));
+
+const mockGetNewPaneTail = vi.fn<(paneId: string, stateDir: string, maxLines?: number) => string>(() => "");
+vi.mock("../../features/rate-limit-wait/pane-fresh-capture.js", () => ({
+  getNewPaneTail: (paneId: string, stateDir: string, maxLines?: number) => mockGetNewPaneTail(paneId, stateDir, maxLines),
 }));
 
 // Mock config and dispatcher modules
@@ -31,6 +45,7 @@ import { wakeOpenClaw } from "../index.js";
 import { getOpenClawConfig, resolveGateway } from "../config.js";
 import { wakeGateway, wakeCommandGateway } from "../dispatcher.js";
 import type { OpenClawConfig } from "../types.js";
+import { parseTmuxTail } from "../../notifications/formatter.js";
 
 const mockConfig: OpenClawConfig = {
   enabled: true,
@@ -65,6 +80,7 @@ describe("wakeOpenClaw", () => {
       statusCode: 200,
     });
     mockGetCurrentTmuxSession.mockReturnValue(null);
+    mockGetNewPaneTail.mockReturnValue("");
   });
 
   afterEach(() => {
@@ -104,6 +120,46 @@ describe("wakeOpenClaw", () => {
     const payload = call[2];
     expect(payload.event).toBe("session-start");
     expect(payload.instruction).toContain("myproject"); // interpolated
+  });
+
+  it("captures fresh pane delta for stop events and passes it directly to payload", async () => {
+    const freshContent = [
+      '❯ rg -n "error|fail|conflict" src tests',
+      "TypeScript check passed: 0 errors, 0 warnings",
+      "RuntimeError: boom",
+      "BLOCKED: runtime failure",
+    ].join("\n");
+    mockGetNewPaneTail.mockReturnValue(freshContent);
+    vi.stubEnv("TMUX", "/tmp/tmux-1000/default,123,0");
+    vi.stubEnv("TMUX_PANE", "%7");
+
+    await wakeOpenClaw("stop", {
+      sessionId: "sid-stop",
+      projectPath: "/home/user/myproject",
+    });
+
+    expect(mockGetNewPaneTail).toHaveBeenCalledWith(
+      "%7",
+      join("/home/user/myproject", ".omc", "state"),
+      15,
+    );
+    const payload = vi.mocked(wakeGateway).mock.calls[0]?.[2];
+    expect(payload.tmuxTail).toBe(parseTmuxTail(freshContent, 15));
+    expect(payload.tmuxTail).toBe("RuntimeError: boom\nBLOCKED: runtime failure");
+  });
+
+  it("omits tmuxTail from stop payload when pane has no new lines", async () => {
+    mockGetNewPaneTail.mockReturnValue("");
+    vi.stubEnv("TMUX", "/tmp/tmux-1000/default,123,0");
+    vi.stubEnv("TMUX_PANE", "%7");
+
+    await wakeOpenClaw("stop", {
+      sessionId: "sid-stop",
+      projectPath: "/home/user/myproject",
+    });
+
+    const payload = vi.mocked(wakeGateway).mock.calls[0]?.[2];
+    expect(payload.tmuxTail).toBeUndefined();
   });
 
   it("uses a single timestamp in both template variables and payload", async () => {
@@ -457,6 +513,8 @@ describe("burst dedupe for attached multi-pane sessions", () => {
       success: true,
       statusCode: 200,
     });
+    execFileSyncMock.mockReset();
+    execFileSyncMock.mockReturnValue(Buffer.from(""));
     mockGetCurrentTmuxSession.mockReturnValue(null);
     mockGetCurrentTmuxSession.mockReturnValue("dev-session");
   });
@@ -529,5 +587,23 @@ describe("burst dedupe for attached multi-pane sessions", () => {
     });
 
     expect(wakeGateway).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not suppress keyword-detector events when the tmux session no longer exists", async () => {
+    // Dead-session suppression lives in index.ts (isPaneAlive guard on capture),
+    // not in the dedupe layer. keyword-detector events go through normal burst
+    // dedupe regardless of tmux session liveness.
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("dead session");
+    });
+
+    const result = await wakeOpenClaw("keyword-detector", {
+      sessionId: "sid-dead",
+      projectPath: projectDir,
+      prompt: "stale pane replay",
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(wakeGateway).toHaveBeenCalledOnce();
   });
 });

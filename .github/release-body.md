@@ -1,93 +1,85 @@
-# oh-my-claudecode v4.11.5: Bug Fixes & Release Skill
+# oh-my-claudecode v4.11.6: add MiniMax coding, display extra usage, split usage cache
 
 ## Release Notes
 
-Release with **30+ bug fixes** across **50+ merged PRs** and **1 new feature**.
-
-### New Features
-
-- **feat(release): rewrite release skill as generic repo-aware assistant** (#2501) — `/oh-my-claudecode:release` now inspects any repo's CI, version files, and release rules on first run and caches them in `.omc/RELEASE_RULE.md`.
+Release with **4 new features**, **30 bug fixes**, **14 other changes** across **50 merged PRs**.
 
 ### Highlights
 
-- **Autopilot/Team stability** — surface hidden dependency stalls before `/autopilot` looks hung; preserve live team workflows when coarse staged state drifts; bound MCP restarts; repair retired team MCP config on upgrade.
-- **Keyword-detector accuracy** — prevent mode activation from quoted reference prose; keep help-style queries informational; preserve activation in mixed command/help prompts.
-- **Ralph robustness** — preserve continuation across interrupted tool turns; silence repeated idle follow-up nudges once backlog is truly zero.
-- **HUD reliability** — prevent setup docs from deleting the installed wrapper; surface import errors; prevent stale root state revival.
-- **Setup/installer correctness** — always update CLAUDE.md on install; avoid hook re-injection for plugin installs; validate and select cache version candidates deterministically.
-- **tmux centralization** — all tmux execution routed through wrapper functions; Windows `.cmd` availability checks aligned; tmux-utils API compatibility restored.
+- **feat(hud): add MiniMax coding plan usage provider** (#2568)
+- **feat(hud): display extra usage spend data in HUD** (#2571)
+- **feat(hud): split usage cache by provider to eliminate cross-session thrashing** (#2556)
+- **feat(release): rewrite release skill as generic repo-aware assistant** (#2501)
+
+### New Features
+
+- **feat(hud): add MiniMax coding plan usage provider** (#2568)
+- **feat(hud): display extra usage spend data in HUD** (#2571)
+- **feat(hud): split usage cache by provider to eliminate cross-session thrashing** (#2556)
+- **feat(release): rewrite release skill as generic repo-aware assistant** (#2501)
 
 ### Bug Fixes
 
-#### Autopilot / Team
-- Surface hidden dependency stalls before /autopilot looks hung
-- Preserve live team workflows when coarse staged state drifts
-- Bound launcher-backed MCP restarts without changing user intent
-- Repair retired team MCP config on upgrade and launch
-- Prevent stale team worktrees from blocking startup
-- Preserve team state for explicit shutdown instead of terminal auto-cleanup
-- Keep bridge autopilot blocker regression aligned with active-session ownership
-- Prevent autopilot runtime insight from leaking unrelated team blockers
-- Let scale-up workers follow the existing provider launch contract
-- Avoid Claude onboarding on default omc launches
-- Prefer consensus planning blockers over team-stage continuation
-- Back off shipped idle follow-ups once zero backlog is unchanged
-- Collapse duplicate native lifecycle bursts for attached tmux sessions (#2494)
-
-#### Keyword Detector / Modes
-- Prevent shipped keyword-detector hooks from re-triggering on explanatory follow-ups
-- Prevent mode activation from quoted reference prose
-- Prevent explanatory mode references from re-triggering orchestration
-- Prevent bundled help-question regexes from collapsing in keyword detection
-- Preserve activation in mixed command/help prompts (#2428)
-- Keep help-style use queries informational (#2428)
-- Prevent stale ralplan terminal states from re-triggering stop enforcement
-- Prevent stale stop-hook state from blocking fresh sessions
-- Silence repeated idle follow-up nudges once backlog is truly zero
-
-#### Ralph
-- Preserve Ralph continuation across interrupted tool turns
-
-#### HUD
-- Prevent HUD setup docs from deleting the installed wrapper
-- Prevent session-recreated HUD panes from reviving stale root state
-- Surface HUD import errors from plugin root wrapper (#2457)
-- Remove stale inline wrapper from HUD skill, copy from canonical template (#2433)
-- Prevent nested tmux HUD panes from surviving cleanup (#2492)
-
-#### Setup / Installer / Doctor
-- Always update claude config CLAUDE.md on install (#2431)
-- Avoid hook re-injection for plugin installs (#2430)
-- Validate and strictly select cache version candidates (#2422)
-- Prefer latest cache version over stale installed path (#2422)
-- Detect CLAUDE.md version drift against plugin cache (#2423)
-- Support companion version markers and mingw-safe checks (#2423)
-- Use deterministic CLAUDE source for version drift check (#2423)
-- Remove extra brace in version drift command (#2423)
-
-#### tmux / CLI
-- Centralize all tmux execution through wrapper functions (#2427)
-- Keep Windows tmux.cmd execution consistent with availability checks (#2444)
-- Restore tmux-utils API compatibility (#2442)
-- Allow completed ultrawork sessions to exit cleanly (#2439)
-
-#### Hooks / Tools
-- Avoid .json false positive in source extension matching (#2432)
-- Recognize `ty` in the supported Python LSP registry (#2439)
-- Align learned skill templates with flat-file discovery (#2438)
+- **fix: suppress optional OMX startup MCP method-not-found pane noise** (#2592)
+- **fix(tmux): suppress stale pane alert replays after session death** (#2590)
+- **fix(hooks): wrap wiki hook additionalContext in hookSpecificOutput** (#2588)
+- **fix(installer): preserve concurrent settings updates during install** (#2586)
+- **fix(hooks): prevent duplicate hook firing when plugin and standalone coexist** (#2579)
+- **fix(openclaw): suppress dead-session pane replay alerts** (#2563)
+- **fix(tmux-detector): suppress stale pane history and commit/UI text false-positives** (#2574)
+- **fix(installer): preserve user skills with OMC-style frontmatter during updates** (#2575)
+- **fix(permission-handler): allow read-only gh issue/pr commands; add installer lib assertions** (#2576)
+- **fix(context-bloat): eliminate three sources of repeated rule/skill injection** (#2578)
+- **fix(ask): close stdin for provider spawns to prevent hang in piped environments** (#2564)
+- **fix(post-tool-verifier): suppress non-actionable error token noise** (#2559)
+- **fix(openclaw): suppress late lifecycle alerts for completed/cleaned-up sessions** (#2554)
+- **fix(keyword-detector): suppress review-seed echo from tripping code-review alerts** (#2550)
+- **fix(purge): symlink stale plugin version dirs to prevent post-upgrade hook failures** (#2549)
+- **fix(deep-interview): replace five remaining hardcoded 20%/0.2 threshold signals (issue #2545)** (#2547)
+- **fix(stop-hook): cap echoed task prompt to 150 chars** (#2544)
+- **fix(mcp): wire wiki, shared_memory, skills, and deepinit tools into standalone server** (#2537)
+- **fix(openclaw): suppress stale tmux pane history in stop/session-end alerts** (#2535)
+- **fix(state-root): centralize OMC_STATE_DIR resolution across hook entrypoints** (#2533)
+- **fix: restrict setup stale-skill cleanup to OMC-managed dirs** (#2528)
+- **fix: reduce post-tool bash failure false positives** (#2526)
+- **fix: pipe multiline ask advisor prompts via stdin** (#2524)
+- **fix(config): warn on deprecated delegation routing** (#2522)
+- **fix(notifications): suppress usage-text tmux alert noise** (#2515)
+- **fix(psm): launch trusted sessions with initial prompt** (#2512)
+- **fix(openclaw): dedupe multi-pane native lifecycle bursts** (#2494)
+- **fix(tmux): keep HUD pane cleanup on the current tmux server** (#2492)
+- **fix(autopilot): scope runtime insight to the active session** (#2491)
+- **fix(team): scaleUp() should honor agentType launch contracts** (#2489)
 
 ### Documentation
 
-- **docs: add omc symlink bootstrap and .mcp.json conflict resolution to CONTRIBUTING** (#2493)
+- **docs: add omc symlink bootstrap and .mcp.json conflict resolution** (#2493)
+
+### Other Changes
+
+- **Make Ralph enforce real PRD and story review gates** (#2604)
+- **Keep PR review verification focused by default** (#2600)
+- **Reduce false-severe PR review noise in clean worktrees** (#2598)
+- **Guard shipped permission-handler parity at the runtime entrypoint** (#2596)
+- **Reduce approval stalls for safe repo inspection and single-test runs** (#2594)
+- **Harden live tmux keyword alerts against prompt/search noise** (#2585)
+- **Harden tmux keyword alerting against review/payload noise** (#2582)
+- **Fix stop-hook timeout enforcement for issue #2565** (#2569)
+- **Fix persistent-mode.cjs OMC_STATE_DIR state resolution mismatch** (#2531)
+- **Suppress stale repo-level CI replay noise after zero backlog** (#2530)
+- **Fix issue #2506: keep review/fix tmux sessions on their requested task context** (#2507)
+- **Fix issue #2504: suppress tmux keyword-alert false positives from PR review seed prompts** (#2505)
+- **Fix tmux keyword-alert noise from prompt-mode startup echo** (#2502)
+- **Back off zero-backlog follow-up spam on unchanged repo state** (#2498)
 
 ### Stats
 
-- **50+ PRs merged** | **1 new feature** | **30+ bug fixes** | **0 breaking changes**
+- **50 PRs merged** | **4 new features** | **30 bug fixes** | **0 security/hardening improvements** | **14 other changes**
 
 ### Install / Update
 
 ```bash
-npm install -g oh-my-claude-sisyphus@4.11.5
+npm install -g oh-my-claude-sisyphus@4.11.6
 ```
 
 Or reinstall the plugin:
@@ -95,4 +87,10 @@ Or reinstall the plugin:
 claude /install-plugin oh-my-claudecode
 ```
 
-**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-claudecode/compare/v4.11.4...v4.11.5
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-claudecode/compare/v4.11.3...v4.11.6
+
+## Contributors
+
+Thank you to all contributors who made this release possible!
+
+@DdangJin @ohprettyhak @pgagarinov @pgagarinov-hvp @Yeachan-Heo

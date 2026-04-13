@@ -127,6 +127,26 @@ function isAntiSlopCleanupRequest(text) {
     (ANTI_SLOP_ACTION_PATTERN.test(text) && ANTI_SLOP_SMELL_PATTERN.test(text));
 }
 
+/** Review-outcome labels that appear together in seeded review instruction text. */
+const REVIEW_SEED_OUTCOME_RES = [
+  /\bapprove\b/i,
+  /\brequest[- ]changes\b/i,
+  /\bmerge[- ]ready\b/i,
+  /\bblocked\b/i,
+];
+
+/**
+ * Returns true when the prompt looks like echoed review-instruction text
+ * (an injected outcome menu: approve / request-changes / merge-ready / blocked),
+ * not a genuine user intent to start review mode.
+ *
+ * Heuristic: ≥2 distinct outcome labels in the first 20 lines → seeded context.
+ */
+function isReviewSeedContext(text) {
+  const preview = text.split('\n').slice(0, 20).join('\n');
+  return REVIEW_SEED_OUTCOME_RES.filter(re => re.test(preview)).length >= 2;
+}
+
 function sanitizeForKeywordDetection(text) {
   return text
     // 0. Strip HTML/markdown comments before tag stripping
@@ -613,13 +633,15 @@ async function main() {
       matches.push({ name: 'tdd', args: '' });
     }
 
-    // Code review keywords
-    if (hasActionableKeyword(cleanPrompt, /\b(code\s+review|review\s+code)\b|(코드\s?리뷰)(?!어)/i)) {
+    // Code review keywords — skip when the prompt is echoed review-instruction text
+    if (!isReviewSeedContext(cleanPrompt) &&
+        hasActionableKeyword(cleanPrompt, /\b(code\s+review|review\s+code)\b|(코드\s?리뷰)(?!어)/i)) {
       matches.push({ name: 'code-review', args: '' });
     }
 
-    // Security review keywords
-    if (hasActionableKeyword(cleanPrompt, /\b(security\s+review|review\s+security)\b|(보안\s?리뷰)(?!어)/i)) {
+    // Security review keywords — skip when the prompt is echoed review-instruction text
+    if (!isReviewSeedContext(cleanPrompt) &&
+        hasActionableKeyword(cleanPrompt, /\b(security\s+review|review\s+security)\b|(보안\s?리뷰)(?!어)/i)) {
       matches.push({ name: 'security-review', args: '' });
     }
 

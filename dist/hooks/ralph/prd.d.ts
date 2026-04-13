@@ -24,6 +24,8 @@ export interface UserStory {
     priority: number;
     /** Whether this story passes (complete and verified) */
     passes: boolean;
+    /** Whether architect verification has approved this story for progression */
+    architectVerified?: boolean;
     /** Optional notes from implementation */
     notes?: string;
 }
@@ -53,6 +55,13 @@ export interface PRDStatus {
 }
 export declare const PRD_FILENAME = "prd.json";
 export declare const PRD_EXAMPLE_FILENAME = "prd.example.json";
+export interface EnsurePrdForStartupResult {
+    ok: boolean;
+    created: boolean;
+    path: string | null;
+    prd?: PRD;
+    error?: string;
+}
 /**
  * Get the path to the prd.json file in a directory
  */
@@ -86,6 +95,10 @@ export declare function markStoryComplete(directory: string, storyId: string, no
  */
 export declare function markStoryIncomplete(directory: string, storyId: string, notes?: string): boolean;
 /**
+ * Mark a story as architect-verified after reviewer approval
+ */
+export declare function markStoryArchitectVerified(directory: string, storyId: string, notes?: string): boolean;
+/**
  * Get a specific story by ID
  */
 export declare function getStory(directory: string, storyId: string): UserStory | null;
@@ -111,6 +124,12 @@ export declare function createSimplePrd(project: string, branchName: string, tas
  * Initialize a PRD in a directory
  */
 export declare function initPrd(directory: string, project: string, branchName: string, description: string, stories?: UserStoryInput[]): boolean;
+/**
+ * Ensure Ralph startup has a valid PRD.json to work from.
+ * - Missing PRD -> create scaffold
+ * - Invalid PRD -> fail clearly
+ */
+export declare function ensurePrdForStartup(directory: string, project: string, branchName: string, description: string, stories?: UserStoryInput[]): EnsurePrdForStartupResult;
 /**
  * Format PRD status as a string for display
  */

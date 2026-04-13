@@ -133,7 +133,7 @@ describe('detectBashFailure', () => {
       expect(detectBashFailure('error: file not found')).toBe(true);
     });
 
-    it('should detect "failed" pattern', () => {
+    it('should detect "failed" pattern when it is a failure summary line', () => {
       expect(detectBashFailure('Build failed')).toBe(true);
     });
 
@@ -141,7 +141,11 @@ describe('detectBashFailure', () => {
       expect(detectBashFailure('zsh: command not found: foo')).toBe(true);
     });
 
-    it('should detect exit code failures', () => {
+    it('should detect Claude exit code failures', () => {
+      expect(detectBashFailure('Error: Exit code 1')).toBe(true);
+    });
+
+    it('should detect textual exit code failures', () => {
       expect(detectBashFailure('exit code: 1')).toBe(true);
     });
 
@@ -149,8 +153,55 @@ describe('detectBashFailure', () => {
       expect(detectBashFailure('fatal: not a git repository')).toBe(true);
     });
 
+    it('should not flag successful pytest output containing failure words', () => {
+      const output = [
+        'tests/test_render.py::TestRender::test_ffmpeg_failure_raises PASSED',
+        'tests/test_render.py::TestRender::test_qa_failure_propagates PASSED',
+        '80 passed in 0.24s',
+      ].join('\n');
+      expect(detectBashFailure(output)).toBe(false);
+    });
+
+    it('should not flag successful grep output containing "Command failed" text', () => {
+      const output = 'scripts/post-tool-verifier.mjs:683:        message = \'Command failed. Please investigate the error and fix before continuing.\'';
+      expect(detectBashFailure(output)).toBe(false);
+    });
+
+    it('should not flag successful output when the word "error" appears mid-line', () => {
+      const output = [
+        'frame=   15 fps=0.0 q=-0.0 size=       0kB time=00:00:00.50 bitrate=   0.8kbits/s speed=5.6x',
+        'codec-side-data: some harmless error metric label',
+        'video:4kB audio:0kB subtitle:0kB other streams:0kB global headers:0kB muxing overhead: 0.000000%',
+      ].join('\n');
+      expect(detectBashFailure(output)).toBe(false);
+    });
+
     it('should return false for clean output', () => {
       expect(detectBashFailure('All tests passed')).toBe(false);
+    });
+
+    it('should ignore quoted error field string literals', () => {
+      expect(detectBashFailure(`return { rateLimits: fallbackData, error: 'network', stale: true };`)).toBe(false);
+    });
+
+    it('should ignore severity metadata lines', () => {
+      expect(detectBashFailure(`"severity": "error"`)).toBe(false);
+    });
+
+    it('should ignore quoted field names inside inert object literals', () => {
+      expect(detectBashFailure(`{ "error": "rate limit", "severity": "warning" }`)).toBe(false);
+    });
+
+    it('should ignore zero-error summaries', () => {
+      expect(detectBashFailure('totalErrors: 0, totalWarnings: 3')).toBe(false);
+    });
+
+    it('should still detect real stack traces and command failures', () => {
+      const output = [
+        'Error: build failed',
+        '    at runBuild (/workspace/scripts/build.mjs:12:7)',
+      ].join('\n');
+      expect(detectBashFailure(output)).toBe(true);
     });
 
     it('should return false for empty output', () => {
@@ -223,6 +274,23 @@ describe('isNonZeroExitWithOutput (issue #960)', () => {
 
     it('no exit code prefix at all', () => {
       expect(isNonZeroExitWithOutput('some normal output')).toBe(false);
+    });
+
+    it('keeps valid stdout classification when remaining lines are only non-actionable error metadata', () => {
+      const output = [
+        'Error: Exit code 8',
+        '"severity": "error"',
+        'totalErrors: 0',
+      ].join('\n');
+      expect(isNonZeroExitWithOutput(output)).toBe(false);
+    });
+
+    it('keeps quoted inert literals from being treated as real failure content', () => {
+      const output = [
+        'Error: Exit code 8',
+        `return { error: 'network', totalErrors: 0 };`,
+      ].join('\n');
+      expect(isNonZeroExitWithOutput(output)).toBe(false);
     });
 
     it('empty string', () => {

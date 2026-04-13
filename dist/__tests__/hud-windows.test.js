@@ -177,7 +177,8 @@ describe('HUD Windows Compatibility', () => {
             const usageApiPath = join(packageRoot, 'src', 'hud', 'usage-api.ts');
             const content = readFileSync(usageApiPath, 'utf-8');
             // Should use join() with separate segments, not forward-slash literals
-            expect(content).toContain("'plugins', 'oh-my-claudecode', '.usage-cache.json'");
+            // Provider-specific cache files use template literals with the same join() pattern
+            expect(content).toContain("'plugins', 'oh-my-claudecode', `.usage-cache-${source}.json`");
         });
     });
 });

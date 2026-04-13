@@ -33,6 +33,9 @@ import {
   clearRalphState,
   getPrdCompletionStatus,
   getRalphContext,
+  getStory,
+  markStoryIncomplete,
+  markStoryArchitectVerified,
   readVerificationState,
   startVerification,
   recordArchitectFeedback,
@@ -41,6 +44,7 @@ import {
   detectArchitectApproval,
   detectArchitectRejection,
   clearVerificationState,
+  type VerificationState,
 } from '../ralph/index.js';
 import { checkIncompleteTodos, getNextPendingTodo, StopContext, isUserAbort, isContextLimitStop, isRateLimitStop, isExplicitCancelCommand, isAuthenticationError } from '../todo-continuation/index.js';
 import { TODO_CONTINUATION_PROMPT } from '../../installer/hooks.js';
@@ -52,6 +56,7 @@ import { readTeamPipelineState } from '../team-pipeline/state.js';
 import type { TeamPipelinePhase } from '../team-pipeline/types.js';
 import { getActiveAgentSnapshot } from '../subagent-tracker/index.js';
 import type { IdleNotificationRepoState } from './idle-repo-state.js';
+import { truncatePromptForEcho } from '../../lib/truncate-prompt.js';
 
 export interface ToolErrorState {
   tool_name: string;
@@ -338,6 +343,41 @@ function isRepeatedZeroBacklogCooldown(
   );
 }
 
+function hasRepeatedZeroBacklogCooldown(
+  stateDir: string,
+  sessionId?: string,
+  repoState?: IdleNotificationRepoState | null,
+): boolean {
+  const cooldownPath = getIdleNotificationCooldownPath(stateDir, sessionId);
+  const cooldownRecord = readIdleNotificationCooldownRecord(cooldownPath);
+
+  if (isRepeatedZeroBacklogCooldown(cooldownRecord, repoState)) {
+    return true;
+  }
+
+  if (cooldownPath !== getGlobalIdleNotificationCooldownPath(stateDir)) {
+    const globalRecord = readIdleNotificationCooldownRecord(getGlobalIdleNotificationCooldownPath(stateDir));
+    if (isRepeatedZeroBacklogCooldown(globalRecord, repoState)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * OpenClaw stop wakes should usually bypass idle cooldowns, but unchanged
+ * zero-backlog repo state should stay suppressed so stale repo-level CI replay
+ * bursts do not re-arm after the actionable backlog is already zero.
+ */
+export function shouldWakeOpenClawOnStop(
+  stateDir: string,
+  sessionId?: string,
+  repoState?: IdleNotificationRepoState | null,
+): boolean {
+  return !hasRepeatedZeroBacklogCooldown(stateDir, sessionId, repoState);
+}
+
 /**
  * Check whether the session-idle notification cooldown has elapsed.
  * Returns true if the notification should be sent.
@@ -351,18 +391,8 @@ export function shouldSendIdleNotification(
   const cooldownPath = getIdleNotificationCooldownPath(stateDir, sessionId);
   const cooldownRecord = readIdleNotificationCooldownRecord(cooldownPath);
 
-  if (isRepeatedZeroBacklogCooldown(cooldownRecord, repoState)) {
+  if (hasRepeatedZeroBacklogCooldown(stateDir, sessionId, repoState)) {
     return false;
-  }
-
-  // Back off unchanged zero-backlog nudges across follow-up sessions too.
-  // Session-scoped cooldown should not keep rearming identical "all clear"
-  // alerts for brand-new session ids when the repo state has not changed.
-  if (cooldownPath !== getGlobalIdleNotificationCooldownPath(stateDir)) {
-    const globalRecord = readIdleNotificationCooldownRecord(getGlobalIdleNotificationCooldownPath(stateDir));
-    if (isRepeatedZeroBacklogCooldown(globalRecord, repoState)) {
-      return false;
-    }
   }
 
   if (repoState && typeof cooldownRecord?.repoSignature === 'string') {
@@ -442,6 +472,159 @@ function readTranscriptTail(transcriptPath: string): string {
   }
 }
 
+function readTranscriptTailLines(transcriptPath: string): string[] {
+  const content = readTranscriptTail(transcriptPath);
+  const lines = content.split('\n');
+
+  try {
+    if (statSync(transcriptPath).size > TRANSCRIPT_TAIL_BYTES && lines.length > 0) {
+      lines.shift();
+    }
+  } catch {
+    return lines;
+  }
+
+  return lines;
+}
+
+type TranscriptContentBlock = {
+  type?: string;
+  id?: string;
+  name?: string;
+  input?: unknown;
+  tool_use_id?: string;
+  content?: unknown;
+};
+
+type TranscriptApprovalEntry = {
+  message?: {
+    content?: TranscriptContentBlock[] | string;
+  };
+};
+
+type ReviewerApprovalPath = 'architect' | 'critic' | 'codex';
+
+const REVIEWER_TASK_TOOL_NAMES = new Set(['Task', 'proxy_Task', 'Agent']);
+const REVIEWER_COMMAND_TOOL_NAMES = new Set(['Bash', 'proxy_Bash']);
+
+function normalizeReviewerPath(subagentType: unknown): ReviewerApprovalPath | null {
+  if (typeof subagentType !== 'string') {
+    return null;
+  }
+
+  const normalized = subagentType.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const baseName = normalized.includes(':')
+    ? normalized.slice(normalized.lastIndexOf(':') + 1)
+    : normalized;
+
+  if (baseName === 'architect' || baseName.startsWith('architect-')) {
+    return 'architect';
+  }
+
+  if (baseName === 'critic' || baseName.startsWith('critic-')) {
+    return 'critic';
+  }
+
+  return null;
+}
+
+function isCodexReviewerCommand(command: unknown): boolean {
+  return typeof command === 'string'
+    && /\bask\s+codex\s+--agent-prompt\s+critic\b/i.test(command);
+}
+
+function extractTranscriptText(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content.map((item) => extractTranscriptText(item)).filter(Boolean).join('\n');
+  }
+
+  if (!content || typeof content !== 'object') {
+    return '';
+  }
+
+  const record = content as Record<string, unknown>;
+  const directText = typeof record.text === 'string' ? record.text : '';
+  const nestedContent = 'content' in record ? extractTranscriptText(record.content) : '';
+  return [directText, nestedContent].filter(Boolean).join('\n');
+}
+
+function matchesVerificationReviewerPath(
+  reviewerPath: ReviewerApprovalPath,
+  verificationState?: Pick<VerificationState, 'critic_mode'>
+): boolean {
+  const expected = verificationState?.critic_mode ?? 'architect';
+  return reviewerPath === expected;
+}
+
+function checkReviewerAuthoredApprovalInMessages(
+  transcriptPath: string,
+  verificationState?: Pick<VerificationState, 'request_id' | 'story_id' | 'critic_mode'>
+): boolean {
+  const reviewerToolUses = new Map<string, ReviewerApprovalPath>();
+
+  for (const line of readTranscriptTailLines(transcriptPath)) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    let entry: TranscriptApprovalEntry;
+    try {
+      entry = JSON.parse(line) as TranscriptApprovalEntry;
+    } catch {
+      continue;
+    }
+
+    const content = entry.message?.content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+
+    for (const block of content) {
+      if (block?.type === 'tool_use' && block.id && block.name) {
+        if (REVIEWER_TASK_TOOL_NAMES.has(block.name)) {
+          const reviewerPath = normalizeReviewerPath((block.input as Record<string, unknown> | undefined)?.subagent_type);
+          if (reviewerPath && matchesVerificationReviewerPath(reviewerPath, verificationState)) {
+            reviewerToolUses.set(block.id, reviewerPath);
+          }
+          continue;
+        }
+
+        if (REVIEWER_COMMAND_TOOL_NAMES.has(block.name)) {
+          const command = (block.input as Record<string, unknown> | undefined)?.command;
+          if (isCodexReviewerCommand(command) && matchesVerificationReviewerPath('codex', verificationState)) {
+            reviewerToolUses.set(block.id, 'codex');
+          }
+        }
+
+        continue;
+      }
+
+      if (block?.type !== 'tool_result' || !block.tool_use_id) {
+        continue;
+      }
+
+      if (!reviewerToolUses.has(block.tool_use_id)) {
+        continue;
+      }
+
+      const reviewerOutput = extractTranscriptText(block.content);
+      if (reviewerOutput && detectArchitectApproval(reviewerOutput, verificationState)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 function estimateTranscriptContextPercent(transcriptPath?: string): number {
   if (!transcriptPath || !existsSync(transcriptPath)) {
     return 0;
@@ -511,26 +694,27 @@ function isAwaitingConfirmation(state: unknown): boolean {
 /**
  * Check for architect approval in session transcript
  */
-function checkArchitectApprovalInTranscript(sessionId: string): boolean {
+function checkArchitectApprovalInTranscript(
+  sessionId: string,
+  verificationState?: Pick<VerificationState, 'request_id' | 'story_id' | 'critic_mode'>
+): boolean {
   const claudeDir = getClaudeConfigDir();
-  const possiblePaths = [
-    join(claudeDir, 'sessions', sessionId, 'transcript.md'),
-    join(claudeDir, 'sessions', sessionId, 'messages.json'),
-    join(claudeDir, 'transcripts', `${sessionId}.md`)
-  ];
+  const possiblePaths = [join(claudeDir, 'sessions', sessionId, 'messages.json')];
 
   for (const transcriptPath of possiblePaths) {
-    if (existsSync(transcriptPath)) {
-      try {
-        const content = readTranscriptTail(transcriptPath);
-        if (detectArchitectApproval(content)) {
-          return true;
-        }
-      } catch {
-        continue;
+    if (!existsSync(transcriptPath)) {
+      continue;
+    }
+
+    try {
+      if (checkReviewerAuthoredApprovalInMessages(transcriptPath, verificationState)) {
+        return true;
       }
+    } catch {
+      continue;
     }
   }
+
   return false;
 }
 
@@ -669,36 +853,53 @@ async function checkRalphLoop(
   }
 
   // Check for existing verification state (architect verification in progress)
-  const verificationState = readVerificationState(workingDir, sessionId);
+  let verificationState = readVerificationState(workingDir, sessionId);
 
   if (verificationState?.pending) {
     // Verification is in progress - check for architect's response
     if (sessionId) {
       // Check for architect approval
-      if (checkArchitectApprovalInTranscript(sessionId)) {
-        // Architect approved - truly complete
-        // Also deactivate ultrawork if it was active alongside ralph
-        clearVerificationState(workingDir, sessionId);
-        clearRalphState(workingDir, sessionId);
-        deactivateUltrawork(workingDir, sessionId);
-        const criticLabel = verificationState.critic_mode === 'codex'
-          ? 'Codex critic'
-          : verificationState.critic_mode === 'critic'
-            ? 'Critic'
-            : 'Architect';
-        return {
-          shouldBlock: false,
-          message: `[RALPH LOOP VERIFIED COMPLETE] ${criticLabel} verified task completion after ${state.iteration} iteration(s). Excellent work!`,
-          mode: 'none'
-        };
+      if (checkArchitectApprovalInTranscript(sessionId, verificationState)) {
+        if (verificationState.verification_scope === 'story' && verificationState.story_id) {
+          markStoryArchitectVerified(workingDir, verificationState.story_id);
+          clearVerificationState(workingDir, sessionId);
+
+          const refreshedState = readRalphState(workingDir, sessionId);
+          if (refreshedState) {
+            const refreshedPrd = getPrdCompletionStatus(workingDir);
+            refreshedState.current_story_id = refreshedPrd.nextStory?.id;
+            writeRalphState(workingDir, refreshedState, sessionId);
+          }
+          verificationState = readVerificationState(workingDir, sessionId);
+        } else {
+          // Architect approved - truly complete
+          // Also deactivate ultrawork if it was active alongside ralph
+          clearVerificationState(workingDir, sessionId);
+          clearRalphState(workingDir, sessionId);
+          deactivateUltrawork(workingDir, sessionId);
+          const criticLabel = verificationState.critic_mode === 'codex'
+            ? 'Codex critic'
+            : verificationState.critic_mode === 'critic'
+              ? 'Critic'
+              : 'Architect';
+          return {
+            shouldBlock: false,
+            message: `[RALPH LOOP VERIFIED COMPLETE] ${criticLabel} verified task completion after ${state.iteration} iteration(s). Excellent work!`,
+            mode: 'none'
+          };
+        }
       }
 
       // Check for architect rejection
       const rejection = checkArchitectRejectionInTranscript(sessionId);
-      if (rejection.rejected) {
+      if (verificationState && rejection.rejected) {
+        if (verificationState.verification_scope === 'story' && verificationState.story_id) {
+          markStoryIncomplete(workingDir, verificationState.story_id, rejection.feedback);
+        }
         // Architect rejected - continue with feedback
         recordArchitectFeedback(workingDir, false, rejection.feedback, sessionId);
         const updatedVerification = readVerificationState(workingDir, sessionId);
+        verificationState = updatedVerification;
 
         if (updatedVerification) {
           const continuationPrompt = getArchitectRejectionContinuationPrompt(updatedVerification);
@@ -715,14 +916,43 @@ async function checkRalphLoop(
       }
     }
 
-    // Verification still pending - remind to run the selected reviewer
-    // Get current story for story-aware verification
-    const prdInfo = getPrdCompletionStatus(workingDir);
-    const currentStory = prdInfo.nextStory ?? undefined;
-    const verificationPrompt = getArchitectVerificationPrompt(verificationState, currentStory);
+    if (verificationState?.pending) {
+      const storyUnderReview = verificationState.story_id
+        ? getStory(workingDir, verificationState.story_id) ?? undefined
+        : undefined;
+
+      // Verification still pending - remind to run the selected reviewer
+      const verificationPrompt = getArchitectVerificationPrompt(verificationState, storyUnderReview);
+      return {
+        shouldBlock: true,
+        message: verificationPrompt,
+        mode: 'ralph',
+        metadata: {
+          iteration: state.iteration,
+          maxIterations: state.max_iterations
+        }
+      };
+    }
+  }
+
+  const prdStatus = getPrdCompletionStatus(workingDir);
+  const currentStory = state.current_story_id
+    ? getStory(workingDir, state.current_story_id)
+    : prdStatus.nextStory;
+
+  if (currentStory?.passes && currentStory.architectVerified !== true) {
+    const startedVerification = startVerification(
+      workingDir,
+      `Story ${currentStory.id} is marked passes: true and requires architect approval before Ralph can progress.`,
+      state.prompt,
+      state.critic_mode,
+      sessionId,
+      currentStory
+    );
+
     return {
       shouldBlock: true,
-      message: verificationPrompt,
+      message: getArchitectVerificationPrompt(startedVerification, currentStory),
       mode: 'ralph',
       metadata: {
         iteration: state.iteration,
@@ -731,9 +961,8 @@ async function checkRalphLoop(
     };
   }
 
-  // Check for PRD-based completion (all stories have passes: true).
+  // Check for PRD-based completion (all stories have passes: true and are architect-verified).
   // Enter a verification phase instead of clearing Ralph immediately.
-  const prdStatus = getPrdCompletionStatus(workingDir);
   if (prdStatus.hasPrd && prdStatus.allComplete) {
     const startedVerification = startVerification(
       workingDir,
@@ -820,7 +1049,7 @@ ${prdInstruction}
 4. When FULLY complete (after ${state.critic_mode === 'codex' ? 'Codex critic' : state.critic_mode === 'critic' ? 'Critic' : 'Architect'} verification), run \`/oh-my-claudecode:cancel\` to cleanly exit and clean up state files. If cancel fails, retry with \`/oh-my-claudecode:cancel --force\`.
 5. Do NOT stop until the task is truly done
 
-${newState.prompt ? `Original task: ${newState.prompt}` : ''}
+${newState.prompt ? `Original task: ${truncatePromptForEcho(newState.prompt)}` : ''}
 
 </ralph-continuation>
 

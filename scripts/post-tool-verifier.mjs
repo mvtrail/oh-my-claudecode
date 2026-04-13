@@ -170,6 +170,31 @@ function stripClaudeTempCwdErrors(output) {
 // Pattern matching Claude Code's "Error: Exit code N" prefix line
 // Note: no /g flag — module-level regex with /g is stateful (.lastIndex persists across calls)
 const CLAUDE_EXIT_CODE_PREFIX = /^Error: Exit code \d+\s*$/m;
+const QUOTED_SPAN_PATTERN =
+  /"[^"\n]{1,400}"|'[^'\n]{1,400}'|“[^”\n]{1,400}”|‘[^’\n]{1,400}’/g;
+const NON_ACTIONABLE_ERROR_LINES = [
+  /^\s*["']?severity["']?\s*[:=]\s*["']error["']?\s*[,}]?\s*$/i,
+  /^\s*["']?totalErrors["']?\s*[:=]\s*0\b.*$/i,
+  /^\s*totalErrors\s*[:=]\s*0\b.*$/i,
+  /^\s*["']?error["']?\s*:\s*["'][^"']*["']\s*[,}]?\s*$/i,
+  /^\s*return\s*\{[^\n]*\berror\s*:\s*["'][^"']*["'][^\n]*\}\s*;?$/i,
+];
+
+function stripQuotedSpans(output) {
+  return output.replace(QUOTED_SPAN_PATTERN, ' ');
+}
+
+function stripNonActionableErrorContext(output) {
+  if (!output) return '';
+  return output
+    .split('\n')
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return true;
+      return !NON_ACTIONABLE_ERROR_LINES.some((pattern) => pattern.test(trimmed));
+    })
+    .join('\n');
+}
 
 /**
  * Detect non-zero exit code with valid stdout (issue #960).
@@ -179,7 +204,7 @@ const CLAUDE_EXIT_CODE_PREFIX = /^Error: Exit code \d+\s*$/m;
  */
 export function isNonZeroExitWithOutput(output) {
   if (!output) return false;
-  const cleaned = stripClaudeTempCwdErrors(output);
+  const cleaned = stripNonActionableErrorContext(stripClaudeTempCwdErrors(output));
 
   // Must contain Claude Code's exit code prefix
   if (!CLAUDE_EXIT_CODE_PREFIX.test(cleaned)) return false;
@@ -203,26 +228,42 @@ export function isNonZeroExitWithOutput(output) {
     /abort/i,
   ];
 
-  return !contentErrorPatterns.some(p => p.test(remaining));
+  return !contentErrorPatterns.some(p => p.test(stripQuotedSpans(remaining)));
 }
 
 // Detect failures in Bash output
 export function detectBashFailure(output) {
+  if (!output) return false;
+
   const cleaned = stripClaudeTempCwdErrors(output);
-  const errorPatterns = [
-    /error:/i,
-    /failed/i,
-    /cannot/i,
-    /permission denied/i,
-    /command not found/i,
-    /no such file/i,
-    /exit code: [1-9]/i,
-    /exit status [1-9]/i,
-    /fatal:/i,
-    /abort/i,
+
+  const explicitExitPatterns = [
+    /(^|\n)Error: Exit code [1-9]\d*(\n|$)/i,
+    /(^|\n).*\bexit code:\s*[1-9]\d*\b/i,
+    /(^|\n).*\bexit status\s+[1-9]\d*\b/i,
   ];
 
-  return errorPatterns.some(pattern => pattern.test(cleaned));
+  if (explicitExitPatterns.some(pattern => pattern.test(cleaned))) {
+    return true;
+  }
+
+  const linePatterns = [
+    /^error:\s+/i,
+    /^(?:bash|zsh|sh): .*command not found/i,
+    /^(?:bash|zsh|sh): .*no such file/i,
+    /^(?:bash|zsh|sh): .*permission denied/i,
+    /^(?:rm|cp|mv|cat|chmod|chown|git|node|npm|pnpm|yarn|python|python3|pip|pip3|cargo|go|rustc|docker|ffmpeg): .*permission denied/i,
+    /^(?:rm|cp|mv|cat|git|node|npm|pnpm|yarn|python|python3|pip|pip3|cargo|go|rustc|docker|ffmpeg): .*no such file/i,
+    /^fatal:\s+/i,
+    /^abort(?:ed)?\b/i,
+    /^(?:build|command|task|operation) failed\b/i,
+  ];
+
+  return cleaned
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .some(line => linePatterns.some(pattern => pattern.test(line)));
 }
 
 // Detect background operation

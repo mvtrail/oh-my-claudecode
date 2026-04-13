@@ -285,6 +285,31 @@ describe('Builtin Skills', () => {
             expect(skill?.template).toContain('drops below 12%.');
             expect(skill?.template?.indexOf('Load runtime settings')).toBeLessThan(skill?.template?.indexOf('Initialize state') ?? Number.POSITIVE_INFINITY);
         });
+        it('replaces all hardcoded 20%/0.2 threshold references in deep-interview template (issue #2545)', () => {
+            const profileDir = mkdtempSync(join(tmpdir(), 'omc-skill-2545-'));
+            tempDirs.push(profileDir);
+            process.env.CLAUDE_CONFIG_DIR = profileDir;
+            writeFileSync(join(profileDir, 'settings.json'), JSON.stringify({ omc: { deepInterview: { ambiguityThreshold: 0.15 } } }));
+            clearSkillsCache();
+            const skill = getBuiltinSkill('deep-interview');
+            expect(skill).toBeDefined();
+            const t = skill.template;
+            // Previously-fixed references (regression guard)
+            expect(t).toContain('"threshold": 0.15,');
+            expect(t).toContain('drops below 15%.');
+            // Issue #2545: five previously-missed hardcoded references
+            expect(t).toContain('(default: 15%)'); // Purpose section
+            expect(t).toContain('(default 0.15)'); // Execution_Policy
+            expect(t).toContain('Gate: ≤15% ambiguity'); // ASCII pipeline diagram
+            expect(t).toContain('(threshold: 15%).'); // Early-exit example message
+            expect(t).toContain('ambiguity ≤ 15%'); // Advanced pipeline description
+            // Ensure none of the conflicting hardcoded 20% signals remain at those sites
+            expect(t).not.toContain('(default: 20%)');
+            expect(t).not.toContain('(default 0.2)');
+            expect(t).not.toContain('Gate: ≤20% ambiguity');
+            expect(t).not.toContain('(threshold: 20%).');
+            expect(t).not.toContain('ambiguity ≤ 20%');
+        });
         it('rewrites built-in skill command examples to plugin-safe bridge invocations when omc is unavailable', () => {
             process.env.CLAUDE_PLUGIN_ROOT = '/plugin-root';
             process.env.PATH = '';

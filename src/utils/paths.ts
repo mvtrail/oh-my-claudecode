@@ -7,7 +7,7 @@
  */
 
 import { join } from 'path';
-import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, rmSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, rmSync, symlinkSync } from 'fs';
 import { homedir } from 'os';
 import { getClaudeConfigDir } from './config-dir.js';
 
@@ -215,6 +215,10 @@ export interface PurgeCacheResult {
   removed: number;
   /** Paths that were removed */
   removedPaths: string[];
+  /** Number of stale version directories replaced with symlinks to the active version */
+  symlinked: number;
+  /** Paths that were converted to symlinks */
+  symlinkPaths: string[];
   /** Errors encountered (non-fatal) */
   errors: string[];
 }
@@ -242,8 +246,22 @@ function stripTrailing(p: string): string {
  * are still referenced by long-running sessions via CLAUDE_PLUGIN_ROOT. */
 const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Compare two semver-like version strings descending (higher version first).
+ * Non-numeric segments fall back to 0.
+ */
+function compareSemverDesc(a: string, b: string): number {
+  const parse = (s: string) => s.split('.').map(n => parseInt(n, 10) || 0);
+  const pa = parse(a), pb = parse(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pb[i] ?? 0) - (pa[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
 export function purgeStalePluginCacheVersions(options?: { skipGracePeriod?: boolean }): PurgeCacheResult {
-  const result: PurgeCacheResult = { removed: 0, removedPaths: [], errors: [] };
+  const result: PurgeCacheResult = { removed: 0, removedPaths: [], symlinked: 0, symlinkPaths: [], errors: [] };
 
   const configDir = getClaudeConfigDir();
   const pluginsDir = join(configDir, 'plugins');
@@ -328,9 +346,39 @@ export function purgeStalePluginCacheVersions(options?: { skipGracePeriod?: bool
           } catch { continue; }
         }
 
-        if (safeRmSync(versionDir)) {
-          result.removed++;
-          result.removedPaths.push(versionDir);
+        // When an active version exists in the same plugin namespace, replace the
+        // stale directory with a symlink rather than deleting it.  This keeps any
+        // running session whose CLAUDE_PLUGIN_ROOT still points to this path working.
+        const pluginDirNorm = stripTrailing(pluginDir);
+        const activeVersionDirsHere = dedupePaths(
+          activePathsArray
+            .filter(ap => ap.startsWith(pluginDirNorm + '/'))
+            .map(ap => join(pluginDir, ap.slice(pluginDirNorm.length + 1).split('/')[0])),
+        );
+
+        if (activeVersionDirsHere.length > 0) {
+          const target = [...activeVersionDirsHere].sort((a, b) =>
+            compareSemverDesc(
+              a.split('/').pop() ?? a,
+              b.split('/').pop() ?? b,
+            ),
+          )[0];
+          if (safeRmSync(versionDir)) {
+            try {
+              symlinkSync(target, versionDir, process.platform === 'win32' ? 'junction' : 'dir');
+              result.symlinked++;
+              result.symlinkPaths.push(versionDir);
+            } catch (err) {
+              result.errors.push(
+                `Failed to symlink ${versionDir} → ${target}: ${err instanceof Error ? err.message : err}`,
+              );
+            }
+          }
+        } else {
+          if (safeRmSync(versionDir)) {
+            result.removed++;
+            result.removedPaths.push(versionDir);
+          }
         }
       }
     }

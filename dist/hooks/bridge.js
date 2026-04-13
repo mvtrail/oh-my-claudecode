@@ -29,6 +29,7 @@ import { readHudState, writeHudState } from "../hud/state.js";
 import { compactOmcStartupGuidance, loadConfig } from "../config/loader.js";
 import { activatePromptPrerequisiteState, buildPromptPrerequisiteDenyReason, buildPromptPrerequisiteReminder, clearPromptPrerequisiteState, getPromptPrerequisiteConfig, isPromptPrerequisiteBlockingTool, parsePromptPrerequisiteSections, readPromptPrerequisiteState, recordPromptPrerequisiteProgress, shouldEnforcePromptPrerequisites, } from "./prompt-prerequisites/index.js";
 import { resolveAutopilotPlanPath, resolveOpenQuestionsPlanPath, } from "../config/plan-output.js";
+import { formatAutopilotRuntimeInsight } from "./autopilot/runtime-insight.js";
 import { writeSkillActiveState } from "./skill-state/index.js";
 import { ULTRAWORK_MESSAGE, ULTRATHINK_MESSAGE, SEARCH_MESSAGE, ANALYZE_MESSAGE, TDD_MESSAGE, CODE_REVIEW_MESSAGE, SECURITY_REVIEW_MESSAGE, RALPH_MESSAGE, PROMPT_TRANSLATION_MESSAGE, } from "../installer/hooks.js";
 // Agent dashboard is used in pre/post-tool-use hot path
@@ -611,37 +612,14 @@ async function processKeywordDetector(input) {
         switch (keywordType) {
             case "ralph": {
                 // Lazy-load ralph module
-                const { createRalphLoopHook, findPrdPath: findPrd, initPrd: initPrdFn, initProgress: initProgressFn, detectNoPrdFlag: detectNoPrd, stripNoPrdFlag: stripNoPrd, detectCriticModeFlag, stripCriticModeFlag, } = await import("./ralph/index.js");
-                // Handle --no-prd flag
-                const noPrd = detectNoPrd(promptText);
+                const { createRalphLoopHook, detectCriticModeFlag, stripCriticModeFlag, } = await import("./ralph/index.js");
                 const criticMode = detectCriticModeFlag(promptText) ?? undefined;
-                const promptWithoutCriticFlag = stripCriticModeFlag(promptText);
-                const cleanPrompt = noPrd
-                    ? stripNoPrd(promptWithoutCriticFlag)
-                    : promptWithoutCriticFlag;
-                // Auto-generate scaffold PRD if none exists and --no-prd not set
-                const existingPrd = findPrd(directory);
-                if (!noPrd && !existingPrd) {
-                    const { basename } = await import("path");
-                    const { execSync } = await import("child_process");
-                    const projectName = basename(directory);
-                    let branchName = "ralph/task";
-                    try {
-                        branchName = execSync("git rev-parse --abbrev-ref HEAD", {
-                            cwd: directory,
-                            encoding: "utf-8",
-                            timeout: 5000,
-                        }).trim();
-                    }
-                    catch {
-                        // Not a git repo or git not available — use fallback
-                    }
-                    initPrdFn(directory, projectName, branchName, cleanPrompt);
-                    initProgressFn(directory);
-                }
+                const cleanPrompt = stripCriticModeFlag(promptText);
                 // Activate ralph state which also auto-activates ultrawork
                 const hook = createRalphLoopHook(directory);
-                const started = hook.startLoop(sessionId, cleanPrompt, criticMode ? { criticMode } : undefined);
+                const started = hook.startLoop(sessionId, cleanPrompt, {
+                    ...(criticMode ? { criticMode } : {}),
+                });
                 if (started) {
                     markModeAwaitingConfirmation(directory, sessionId, 'ralph', 'ultrawork');
                 }
@@ -731,7 +709,7 @@ async function processPersistentMode(input) {
     const sessionId = input.sessionId ?? rawSessionId;
     const directory = resolveToWorktreeRoot(input.directory);
     // Lazy-load persistent-mode and todo-continuation modules
-    const { checkPersistentModes, createHookOutput, shouldSendIdleNotification, recordIdleNotificationSent, } = await import("./persistent-mode/index.js");
+    const { checkPersistentModes, createHookOutput, shouldWakeOpenClawOnStop, shouldSendIdleNotification, recordIdleNotificationSent, } = await import("./persistent-mode/index.js");
     const { isExplicitCancelCommand, isAuthenticationError } = await import("./todo-continuation/index.js");
     // Extract stop context for abort detection (supports both camelCase and snake_case)
     const stopContext = {
@@ -771,13 +749,16 @@ async function processPersistentMode(input) {
             const isContextLimit = stopContext.stop_reason === "context_limit" ||
                 stopContext.stopReason === "context_limit";
             if (!isAbort && !isContextLimit) {
-                // Always wake OpenClaw on stop — cooldown only applies to user-facing notifications
-                _openclaw.wake("stop", { sessionId, projectPath: directory });
                 // Per-session cooldown: prevent notification spam when the session idles repeatedly.
                 // Uses session-scoped state so one session does not suppress another.
                 const stateDir = join(getOmcRoot(directory), "state");
-                if (shouldSendIdleNotification(stateDir, sessionId)) {
-                    recordIdleNotificationSent(stateDir, sessionId);
+                const { getIdleNotificationRepoState } = await import("./persistent-mode/idle-repo-state.js");
+                const idleRepoState = getIdleNotificationRepoState(directory);
+                if (shouldWakeOpenClawOnStop(stateDir, sessionId, idleRepoState)) {
+                    _openclaw.wake("stop", { sessionId, projectPath: directory });
+                }
+                if (shouldSendIdleNotification(stateDir, sessionId, idleRepoState)) {
+                    recordIdleNotificationSent(stateDir, sessionId, idleRepoState);
                     const logSessionIdleNotifyFailure = createSwallowedErrorLogger('hooks.bridge session-idle notification failed');
                     import("../notifications/index.js")
                         .then(({ notify }) => notify("session-idle", {
@@ -1417,39 +1398,16 @@ async function processPostToolUse(input) {
     if (toolName === "skill") {
         const skillName = getInvokedSkillName(input.toolInput);
         if (skillName === "ralph") {
-            const { createRalphLoopHook, findPrdPath: findPrd, initPrd: initPrdFn, initProgress: initProgressFn, detectNoPrdFlag: detectNoPrd, stripNoPrdFlag: stripNoPrd, detectCriticModeFlag, stripCriticModeFlag, } = await import("./ralph/index.js");
+            const { createRalphLoopHook, detectCriticModeFlag, stripCriticModeFlag, } = await import("./ralph/index.js");
             const rawPrompt = typeof input.prompt === "string" && input.prompt.trim().length > 0
                 ? input.prompt
                 : "Ralph loop activated via Skill tool";
-            // Handle --no-prd flag
-            const noPrd = detectNoPrd(rawPrompt);
             const criticMode = detectCriticModeFlag(rawPrompt) ?? undefined;
-            const promptWithoutCriticFlag = stripCriticModeFlag(rawPrompt);
-            const cleanPrompt = noPrd
-                ? stripNoPrd(promptWithoutCriticFlag)
-                : promptWithoutCriticFlag;
-            // Auto-generate scaffold PRD if none exists and --no-prd not set
-            const existingPrd = findPrd(directory);
-            if (!noPrd && !existingPrd) {
-                const { basename } = await import("path");
-                const { execSync } = await import("child_process");
-                const projectName = basename(directory);
-                let branchName = "ralph/task";
-                try {
-                    branchName = execSync("git rev-parse --abbrev-ref HEAD", {
-                        cwd: directory,
-                        encoding: "utf-8",
-                        timeout: 5000,
-                    }).trim();
-                }
-                catch {
-                    // Not a git repo or git not available — use fallback
-                }
-                initPrdFn(directory, projectName, branchName, cleanPrompt);
-                initProgressFn(directory);
-            }
+            const cleanPrompt = stripCriticModeFlag(rawPrompt);
             const hook = createRalphLoopHook(directory);
-            hook.startLoop(input.sessionId, cleanPrompt, criticMode ? { criticMode } : undefined);
+            hook.startLoop(input.sessionId, cleanPrompt, {
+                ...(criticMode ? { criticMode } : {}),
+            });
         }
         // Clear skill-active state on skill completion to prevent false-blocking.
         // Without this, every non-'none' skill falsely blocks stops until TTL expires.
@@ -1558,10 +1516,12 @@ async function processAutopilot(input) {
         openQuestionsPath: resolveOpenQuestionsPlanPath(config),
     };
     const phasePrompt = getPhasePrompt(state.phase, context);
-    if (phasePrompt) {
+    const runtimeInsight = formatAutopilotRuntimeInsight(directory, input.sessionId);
+    if (phasePrompt || runtimeInsight) {
+        const detailParts = [runtimeInsight, phasePrompt].filter(Boolean);
         return {
             continue: true,
-            message: `[AUTOPILOT - Phase: ${state.phase.toUpperCase()}]\n\n${phasePrompt}`,
+            message: `[AUTOPILOT - Phase: ${state.phase.toUpperCase()}]\n\n${detailParts.join("\n\n")}`,
         };
     }
     return { continue: true };

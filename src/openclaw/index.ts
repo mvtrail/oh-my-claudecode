@@ -32,8 +32,9 @@ import { getOpenClawConfig, resolveGateway } from "./config.js";
 import { wakeGateway, wakeCommandGateway, interpolateInstruction, isCommandGateway } from "./dispatcher.js";
 import { buildOpenClawSignal } from "./signal.js";
 import { shouldCollapseOpenClawBurst } from "./dedupe.js";
-import { basename } from "path";
+import { basename, join } from "path";
 import { getCurrentTmuxSession } from "../notifications/tmux.js";
+import { parseTmuxTail } from "../notifications/formatter.js";
 
 /** Whether debug logging is enabled */
 const DEBUG = process.env.OMC_OPENCLAW_DEBUG === "1";
@@ -111,18 +112,27 @@ export async function wakeOpenClaw(
       return { gateway: gatewayName, success: true, skipped: "deduped" };
     }
 
-    // Auto-capture tmux pane content for stop/session-end events (best-effort)
+    // Auto-capture tmux pane content for stop/session-end events (best-effort).
+    // Uses delta-only capture to avoid re-alerting on stale pane history from
+    // already-resolved blockers (e.g. old "2 failed" / "exit 127" / "TS5055" lines).
     let tmuxTail = context.tmuxTail;
     if (!tmuxTail && (event === "stop" || event === "session-end") && process.env.TMUX) {
       try {
-        const { capturePaneContent } = await import("../features/rate-limit-wait/tmux-detector.js");
+        const { getNewPaneTail } = await import("../features/rate-limit-wait/pane-fresh-capture.js");
         const paneId = process.env.TMUX_PANE;
-        if (paneId) {
-          tmuxTail = capturePaneContent(paneId, 15) ?? undefined;
+        const projectPath = context.projectPath;
+        if (paneId && projectPath) {
+          const stateDir = join(projectPath, ".omc", "state");
+          const fresh = getNewPaneTail(paneId, stateDir, 15);
+          tmuxTail = fresh || undefined;
         }
       } catch {
         // Non-blocking: tmux capture is best-effort
       }
+    }
+    if (tmuxTail) {
+      const parsedTmuxTail = parseTmuxTail(tmuxTail, 15);
+      tmuxTail = parsedTmuxTail || undefined;
     }
 
     // Build template variables from whitelisted context fields

@@ -172,6 +172,7 @@ export declare function getInstalledOmcPluginRoots(): string[];
  */
 export declare function hasPluginProvidedAgentFiles(): boolean;
 export declare function hasPluginProvidedSkillFiles(): boolean;
+export declare function hasPluginProvidedHookFiles(): boolean;
 export declare function hasEnabledOmcPlugin(): boolean;
 export declare function getRuntimePackageRoot(): string;
 /**

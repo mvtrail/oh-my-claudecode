@@ -324,6 +324,29 @@ Read src/hooks/bridge.ts first.`,
                 rmSync(tempDir, { recursive: true, force: true });
             }
         });
+        it('strips legacy --no-prd text but still starts Ralph in PRD mode from keyword routing', async () => {
+            const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-keyword-ralph-prd-'));
+            try {
+                execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
+                const sessionId = 'keyword-ralph-prd-session';
+                const result = await processHook('keyword-detector', {
+                    sessionId,
+                    prompt: 'ralph --no-prd fix the startup gate in src/hooks/bridge.ts and src/hooks/ralph/loop.ts by removing legacy bypass handling, preserving critic flag support, keeping linked ultrawork activation intact, adding focused regression coverage for keyword and skill entrypoints, confirming the startup PRD scaffold is still created, and avoiding unrelated orchestration behavior changes anywhere else in this worktree',
+                    directory: tempDir,
+                });
+                expect(result.continue).toBe(true);
+                const ralphPath = join(tempDir, '.omc', 'state', 'sessions', sessionId, 'ralph-state.json');
+                const prdPath = join(tempDir, '.omc', 'prd.json');
+                expect(existsSync(ralphPath)).toBe(true);
+                expect(existsSync(prdPath)).toBe(true);
+                const ralphState = JSON.parse(readFileSync(ralphPath, 'utf-8'));
+                expect(ralphState.prompt).toBe('ralph fix the startup gate in src/hooks/bridge.ts and src/hooks/ralph/loop.ts by removing legacy bypass handling, preserving critic flag support, keeping linked ultrawork activation intact, adding focused regression coverage for keyword and skill entrypoints, confirming the startup PRD scaffold is still created, and avoiding unrelated orchestration behavior changes anywhere else in this worktree');
+                expect(ralphState.prd_mode).toBe(true);
+            }
+            finally {
+                rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
         it('clears awaiting confirmation when Skill tool actually invokes ralph', async () => {
             const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-confirm-ralph-'));
             try {
@@ -922,6 +945,13 @@ Read src/hooks/bridge.ts first.`,
                     expansion: { spec_path: null },
                     planning: { plan_path: null },
                 }, null, 2));
+                writeFileSync(join(sessionDir, 'team-state.json'), JSON.stringify({
+                    active: true,
+                    session_id: sessionId,
+                    team_name: 'bridge-autopilot-demo-team',
+                    current_phase: 'team-exec',
+                }, null, 2));
+                writeCanonicalTeamState(testDir, sessionId, 'bridge-autopilot-demo-team', 'executing');
                 writeFileSync(join(teamRoot, 'tasks', '1.json'), JSON.stringify({
                     id: '1',
                     subject: 'Blocked task',
@@ -993,20 +1023,29 @@ Read src/hooks/bridge.ts first.`,
             const decision = specific.decision;
             expect(decision.behavior).toBe('allow');
         });
-        it('permission-request: camelCase input also auto-allows safe command', async () => {
-            const input = {
-                sessionId: 'test-session-858',
-                directory: '/tmp/test-routing',
-                toolName: 'Bash',
-                toolInput: { command: 'npm test' },
-            };
-            const result = await processHook('permission-request', input);
-            expect(result.continue).toBe(true);
-            const out = result;
-            expect(out.hookSpecificOutput).toBeDefined();
-            const specific = out.hookSpecificOutput;
-            const decision = specific.decision;
-            expect(decision.behavior).toBe('allow');
+        it('permission-request: camelCase input auto-allows explicitly targeted single-test commands', async () => {
+            const tempDir = mkdtempSync(join(tmpdir(), 'bridge-858-permission-camel-'));
+            try {
+                mkdirSync(join(tempDir, 'src', '__tests__'), { recursive: true });
+                execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
+                writeFileSync(join(tempDir, 'src', '__tests__', 'safe.test.ts'), 'test("x", () => {});\n');
+                const input = {
+                    sessionId: 'test-session-858',
+                    directory: tempDir,
+                    toolName: 'Bash',
+                    toolInput: { command: 'vitest run src/__tests__/safe.test.ts' },
+                };
+                const result = await processHook('permission-request', input);
+                expect(result.continue).toBe(true);
+                const out = result;
+                expect(out.hookSpecificOutput).toBeDefined();
+                const specific = out.hookSpecificOutput;
+                const decision = specific.decision;
+                expect(decision.behavior).toBe('allow');
+            }
+            finally {
+                rmSync(tempDir, { recursive: true, force: true });
+            }
         });
         it('setup-init: snake_case input reaches handler and returns additionalContext', async () => {
             const tempDir = mkdtempSync(join(tmpdir(), 'bridge-858-setup-'));

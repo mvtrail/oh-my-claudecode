@@ -12,6 +12,30 @@
  * Response: { five_hour: { utilization }, seven_day: { utilization } }
  */
 import { type RateLimits, type UsageResult } from './types.js';
+interface UsageApiResponse {
+    five_hour?: {
+        utilization?: number;
+        resets_at?: string;
+    };
+    seven_day?: {
+        utilization?: number;
+        resets_at?: string;
+    };
+    seven_day_sonnet?: {
+        utilization?: number;
+        resets_at?: string;
+    };
+    seven_day_opus?: {
+        utilization?: number;
+        resets_at?: string;
+    };
+    extra_usage?: {
+        utilization?: number;
+        spent_usd?: number;
+        limit_usd?: number;
+        resets_at?: string;
+    };
+}
 interface ZaiQuotaResponse {
     data?: {
         limits?: Array<{
@@ -30,9 +54,45 @@ interface ZaiQuotaResponse {
  */
 export declare function isZaiHost(urlString: string): boolean;
 /**
+ * Check if a URL points to MiniMax.
+ * Matches all known MiniMax domains:
+ *   - minimax.io / *.minimax.io  (international)
+ *   - minimaxi.com / *.minimaxi.com  (China)
+ *   - minimax.com / *.minimax.com  (China alternative)
+ */
+export declare function isMinimaxHost(urlString: string): boolean;
+interface MinimaxModelRemain {
+    model_name: string;
+    current_interval_total_count: number;
+    current_interval_usage_count: number;
+    start_time: number;
+    end_time: number;
+    remains_time: number;
+    current_weekly_total_count: number;
+    current_weekly_usage_count: number;
+    weekly_start_time: number;
+    weekly_end_time: number;
+    weekly_remains_time: number;
+}
+interface MinimaxCodingPlanResponse {
+    model_remains?: MinimaxModelRemain[];
+    base_resp?: {
+        status_code: number;
+        status_msg: string;
+    };
+}
+/**
+ * Parse API response into RateLimits
+ */
+export declare function parseUsageResponse(response: UsageApiResponse): RateLimits | null;
+/**
  * Parse z.ai API response into RateLimits
  */
 export declare function parseZaiResponse(response: ZaiQuotaResponse): RateLimits | null;
+/**
+ * Parse MiniMax coding plan API response into RateLimits
+ */
+export declare function parseMinimaxResponse(response: MinimaxCodingPlanResponse): RateLimits | null;
 /**
  * Get usage data (with caching)
  *

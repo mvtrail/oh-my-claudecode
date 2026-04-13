@@ -67,6 +67,7 @@ export {
   getPrdStatus,
   markStoryComplete,
   markStoryIncomplete,
+  markStoryArchitectVerified,
   getStory,
   getNextStory,
 
@@ -74,6 +75,7 @@ export {
   createPrd,
   createSimplePrd,
   initPrd,
+  ensurePrdForStartup,
 
   // Formatting
   formatPrdStatus,
