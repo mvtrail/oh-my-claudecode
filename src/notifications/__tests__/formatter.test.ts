@@ -379,6 +379,74 @@ describe("parseTmuxTail noise filters", () => {
 
     expect(parseTmuxTail(input)).toBe("");
   });
+
+  it("drops review prose enumerating error/fail/conflict verdicts", () => {
+    const input = [
+      "Review the run and reply with one outcome:",
+      "1. error",
+      "2. fail",
+      "3. conflict",
+      "4. blocked",
+    ].join("\n");
+
+    expect(parseTmuxTail(input)).toBe("");
+  });
+
+  it("drops diff and code literal lines that only mention alert keywords", () => {
+    const input = [
+      "diff --git a/src/app.ts b/src/app.ts",
+      '+ throw new Error("worker_notify_failed");',
+      '+ const payload = { status: "failed", error: "claim_conflict" };',
+      '@@ -10,4 +10,4 @@',
+    ].join("\n");
+
+    expect(parseTmuxTail(input)).toBe("");
+  });
+
+  it("drops MCP payload literals that only contain structured failure markers", () => {
+    const input = [
+      'mcp: {"jsonrpc":"2.0","error":{"code":"operation_failed","message":"claim_conflict"}}',
+      'response: {"ok":false,"reason":"worker_notify_failed"}',
+      'payload: {"status":"failed","details":["invalid_transition"]}',
+    ].join("\n");
+
+    expect(parseTmuxTail(input)).toBe("");
+  });
+
+  it("preserves actionable runtime failures written as normal prose", () => {
+    const input = [
+      "worker_notify_failed while dispatching startup inbox",
+      "Task failed after retry budget exhausted",
+      "Resolve the merge conflict in src/team/runtime-v2.ts before rerunning tests",
+    ].join("\n");
+
+    expect(parseTmuxTail(input)).toBe(input);
+  });
+
+  it("preserves real runtime errors even when adjacent to MCP-ish context", () => {
+    const input = [
+      'payload: {"status":"completed"}',
+      "Runtime error: worker crashed after SIGTERM",
+      "The failure is actionable: restart the pane and rerun the task",
+    ].join("\n");
+
+    expect(parseTmuxTail(input)).toBe(
+      "Runtime error: worker crashed after SIGTERM\nThe failure is actionable: restart the pane and rerun the task",
+    );
+  });
+
+  it("preserves vitest runtime failure prose while collapsing structured literals", () => {
+    const input = [
+      'mcp: {"jsonrpc":"2.0","error":{"code":"operation_failed","message":"claim_conflict"}}',
+      '+ const payload = { status: "failed", error: "claim_conflict" };',
+      "Error: Cannot find module vitest",
+      "failed to load config from /tmp/x/vitest.config.ts",
+    ].join("\n");
+
+    expect(parseTmuxTail(input)).toBe(
+      "Error: Cannot find module vitest\nfailed to load config from /tmp/x/vitest.config.ts",
+    );
+  });
 });
 
 describe("tmuxTail in formatters", () => {

@@ -198,6 +198,9 @@ const REVIEW_SEED_OUTCOME_PATTERNS = [
   { key: "request-changes", pattern: /\brequest[- ]changes\b/i },
   { key: "follow-up-fix", pattern: /\bfollow[- ]up[- ]fix\b/i },
   { key: "blocked", pattern: /\bblocked\b/i },
+  { key: "error", pattern: /\berrors?\b/i },
+  { key: "failure", pattern: /\bfail(?:ed|ure|ures)?\b/i },
+  { key: "conflict", pattern: /\bconflicts?\b/i },
 ] as const;
 
 /** Instructional phrasing commonly found in seeded review prompts. */
@@ -212,6 +215,15 @@ const SOURCE_PATH_LINE_RE = /^(?:\.\/)?[A-Za-z0-9_./-]+:\d+:/;
 const STATIC_CODE_ALERT_RE = /(?:\blog_error\b|\becho\b).*?(?:"error\||"Usage:)|==\s*"error"/;
 const HELP_USAGE_LINE_RE = /^(?:Usage|Examples?|Commands?|Options?|Flags?):/i;
 const STATIC_HELP_CODE_RE = /^(?:log_error\s+"Usage:|if\s+\[\[.*==\s*"error".*\]\];?\s*then$)/;
+const DIFF_HEADER_LINE_RE = /^(?:diff --git\b|index\s+[0-9a-f]{6,}\.\.[0-9a-f]{6,}\b|@@\s+[-+]\d|---\s+\S|\+\+\+\s+\S)/i;
+const STRUCTURED_ALERT_KEYWORD_RE =
+  /\b(?:error|errors?|fail(?:ed|ure|ures)?|conflict|conflicts|operation_failed|claim_conflict|invalid_transition|blocked_dependency|worker_notify_failed)\b/i;
+const JSONISH_LINE_RE =
+  /^(?:[{[]|"(?:[^"\\]|\\.)+"\s*:|'(?:[^'\\]|\\.)+'\s*:)/;
+const REQUEST_RESPONSE_LITERAL_RE =
+  /^(?:payload|request|response|input|output|args|params|body|mcp)\s*[:=]\s*[{[]/i;
+const CODE_LITERAL_PREFIX_RE =
+  /^(?:[+-]\s*(?:[{[]|"(?:[^"\\]|\\.)+"\s*:|'(?:[^'\\]|\\.)+'\s*:|(?:const|let|var|return|throw|if|await|expect|mock|vi\.)\b|[A-Za-z_$][\w$-]*\s*:)|(?:const|let|var|return|throw|if|await|expect|mock|vi\.)\b)/;
 
 /** Default maximum number of meaningful lines to include in a notification.
  * Matches DEFAULT_TMUX_TAIL_LINES in config.ts. */
@@ -257,6 +269,15 @@ function trimReviewSeedPrefix(lines: string[]): string[] {
   return lines.slice(candidateEnd + 1);
 }
 
+function looksLikeStructuredAlertLiteral(line: string): boolean {
+  const trimmed = line.trim();
+  if (!STRUCTURED_ALERT_KEYWORD_RE.test(trimmed)) return false;
+  if (/^(?:\{.*\}|\[.*\])$/.test(trimmed) && /["'{\[\]}:,]/.test(trimmed)) return true;
+  if (JSONISH_LINE_RE.test(trimmed)) return true;
+  if (CODE_LITERAL_PREFIX_RE.test(trimmed) && /["'`{}[\]()=>]/.test(trimmed)) return true;
+  return false;
+}
+
 /**
  * Parse raw tmux output into clean, human-readable lines.
  * - Strips ANSI escape codes
@@ -278,9 +299,12 @@ export function parseTmuxTail(raw: string, maxLines: number = DEFAULT_MAX_TAIL_L
     if (OMC_HUD_RE.test(trimmed)) continue;
     if (BYPASS_PERM_RE.test(trimmed)) continue;
     if (BARE_PROMPT_RE.test(trimmed)) continue;
+    if (DIFF_HEADER_LINE_RE.test(trimmed)) continue;
+    if (REQUEST_RESPONSE_LITERAL_RE.test(trimmed)) continue;
     if (HELP_USAGE_LINE_RE.test(trimmed)) continue;
     if (STATIC_HELP_CODE_RE.test(trimmed)) continue;
     if (SOURCE_PATH_LINE_RE.test(trimmed) && STATIC_CODE_ALERT_RE.test(trimmed)) continue;
+    if (looksLikeStructuredAlertLiteral(trimmed)) continue;
 
     // Alphanumeric density check: drop lines mostly composed of special characters
     const alnumCount = (trimmed.match(/[a-zA-Z0-9]/g) || []).length;

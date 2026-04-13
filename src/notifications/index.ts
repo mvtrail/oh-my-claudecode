@@ -112,7 +112,7 @@ import { dispatchNotifications } from "./dispatcher.js";
 import { getCurrentTmuxSession } from "./tmux.js";
 import { getHookConfig, resolveEventTemplate } from "./hook-config.js";
 import { interpolateTemplate } from "./template-engine.js";
-import { basename } from "path";
+import { basename, join } from "path";
 
 /**
  * High-level notification function.
@@ -188,11 +188,14 @@ export async function notify(
         const { capturePaneContent } = await import(
           "../features/rate-limit-wait/tmux-detector.js"
         );
-        const tailLines = getTmuxTailLines(config);
-        const tail = parseTmuxTail(
-          capturePaneContent(payload.tmuxPaneId, tailLines),
-          tailLines,
+        const { getNewPaneTail } = await import(
+          "../features/rate-limit-wait/pane-fresh-capture.js"
         );
+        const tailLines = getTmuxTailLines(config);
+        const rawTail = payload.projectPath
+          ? getNewPaneTail(payload.tmuxPaneId, join(payload.projectPath, ".omc", "state"), tailLines)
+          : capturePaneContent(payload.tmuxPaneId, tailLines);
+        const tail = parseTmuxTail(rawTail, tailLines);
         if (tail) {
           payload.tmuxTail = tail;
           payload.maxTailLines = tailLines;
