@@ -645,6 +645,11 @@ ${cleanContent}
           try {
             // Atomic: create temp symlink then rename over stale path
             const tmpLink = stalePath + '.tmp.' + process.pid;
+            // Ensure parent dir exists (stalePath may reference a deleted config tree)
+            const parentDir = dirname(stalePath);
+            if (!existsSync(parentDir)) {
+              try { mkdirSync(parentDir, { recursive: true }); } catch {}
+            }
             symlinkSync(symlinkTarget, tmpLink, isWin ? 'junction' : undefined);
             try {
               renameSync(tmpLink, stalePath);
