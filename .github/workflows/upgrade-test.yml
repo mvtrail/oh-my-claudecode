@@ -32,11 +32,11 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      # ── 2. Install Claude Code non-interactively ─────────────────────────────
-      # ANTHROPIC_API_KEY must be set so `claude` authenticates without OAuth.
-      # NOTE: Step 6 is gated with `if: github.event_name != 'pull_request'`
-      # so it runs only on push/workflow_dispatch where secrets are available.
-      # Steps 3-5 still run on all PRs and validate the omc update path.
+      # ── 2. Install Claude Code ────────────────────────────────────────────────
+      # Keep Claude Code installed in CI so the upgrade path still runs in a
+      # realistic environment, but avoid relying on Claude runtime behavior for
+      # hook verification. Step 6 validates the installed SessionStart hook
+      # directly from repo-owned artifacts and therefore runs on push + PR.
 
       - name: Install Claude Code
         run: |
@@ -137,46 +137,71 @@ jobs:
           fi
           echo "PASS: omc updated from 4.9.3 to $UPDATED_VERSION"
 
-      # ── 6. Trigger session-start hook via claude --print ─────────────────────
-      # Run Claude Code in print mode (--print, not -p) with a trivial prompt.
-      # The session-start hook fires at session init.
-      # Any stderr output or non-zero exit is a failure.
-      # Requires ANTHROPIC_API_KEY — will fail on fork PRs (see note in step 2).
+      # ── 6. Verify SessionStart hook wiring + execution ───────────────────────
+      # Validate the update-owned coverage directly:
+      #   - settings.json contains a SessionStart command for session-start.mjs
+      #   - the installed standalone hook script exists
+      #   - the hook script runs successfully on representative SessionStart JSON
       #
-      # Assumption: `claude --print "echo hello"` fires the SessionStart hook.
-      # This is consistent with Claude Code's session model (--print establishes a
-      # session, hooks fire at session init), but has not been empirically verified
-      # against all Claude Code versions. If --print does not initialize hooks in
-      # some versions, step 6 passes vacuously. Mitigation: CI failure on any
-      # stderr still catches hook/runtime misconfigurations.
-
-      # Skip on all PRs (fork or not) since secrets.ANTHROPIC_API_KEY is
-      # unavailable on pull_request events. Steps 3-5 still validate the
-      # omc update path on all PRs; step 6 runs on push and workflow_dispatch.
-      - name: Trigger session-start hook via Claude Code
-        if: github.event_name != 'pull_request'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # This keeps upgrade coverage inside OMC-owned artifacts and avoids relying
+      # on external Claude CLI print-mode behavior in headless CI.
+      - name: Verify SessionStart hook wiring and script
         run: |
           set -o pipefail
 
-          # Run claude --print (long form of -p flag)
-          claude --print "echo hello" 1>"$RUNNER_TEMP/session.stdout.log" 2>"$RUNNER_TEMP/session.stderr.log"
-          SESSION_EXIT=$?
+          CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+          SESSION_HOOK="$CLAUDE_CONFIG_DIR/hooks/session-start.mjs"
+          SETTINGS_PATH="$CLAUDE_CONFIG_DIR/settings.json"
 
-          # Any stderr from Claude Code or the hook is a failure
+          if [ ! -f "$SESSION_HOOK" ]; then
+            echo "FAIL: missing SessionStart hook script at $SESSION_HOOK"
+            exit 1
+          fi
+
+          if [ ! -f "$SETTINGS_PATH" ]; then
+            echo "FAIL: missing Claude settings at $SETTINGS_PATH"
+            exit 1
+          fi
+
+          SESSION_COMMAND="$(node -e '
+            const fs = require("fs");
+            const settings = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const groups = settings.hooks?.SessionStart ?? [];
+            const command = groups
+              .flatMap(group => group?.hooks ?? [])
+              .find(hook => hook?.type === "command" && typeof hook.command === "string" && hook.command.includes("session-start.mjs"))
+              ?.command ?? "";
+            process.stdout.write(command);
+          ' "$SETTINGS_PATH")"
+
+          if [ -z "$SESSION_COMMAND" ]; then
+            echo "FAIL: settings.json is missing a SessionStart command for session-start.mjs"
+            cat "$SETTINGS_PATH"
+            exit 1
+          fi
+
+          printf '%s' \
+            "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"ci-upgrade-test\",\"cwd\":\"$GITHUB_WORKSPACE\"}" \
+            | node "$SESSION_HOOK" 1>"$RUNNER_TEMP/session.stdout.log" 2>"$RUNNER_TEMP/session.stderr.log"
+
           if [ -s "$RUNNER_TEMP/session.stderr.log" ]; then
-            echo "FAIL: Claude Code / session-start hook produced stderr:"
+            echo "FAIL: SessionStart hook produced stderr:"
             cat "$RUNNER_TEMP/session.stderr.log"
             echo "stdout:"
             cat "$RUNNER_TEMP/session.stdout.log"
             exit 1
           fi
 
-          if [ "$SESSION_EXIT" -ne 0 ]; then
-            echo "FAIL: Claude Code exited with code $SESSION_EXIT"
-            cat "$RUNNER_TEMP/session.stdout.log"
-            exit 1
-          fi
+          node -e '
+            const fs = require("fs");
+            const output = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (output.continue !== true) {
+              throw new Error("SessionStart hook did not return continue=true");
+            }
+            const hookName = output.hookSpecificOutput?.hookEventName;
+            if (hookName !== undefined && hookName !== "SessionStart") {
+              throw new Error(`Unexpected hookSpecificOutput.hookEventName: ${hookName}`);
+            }
+          ' "$RUNNER_TEMP/session.stdout.log"
 
-          echo "PASS: Claude Code session completed with no stderr"
+          echo "PASS: SessionStart hook is configured and executes cleanly"
