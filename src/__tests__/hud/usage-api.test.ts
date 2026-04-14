@@ -224,6 +224,47 @@ describe('parseZaiResponse', () => {
     expect(result!.monthlyResetsAt!.getTime()).toBe(1778290717998);
   });
 
+  it('omits weekly when pro-tier response only has TOKENS_LIMIT + TIME_LIMIT (no weekly bucket)', () => {
+    // Real z.ai response: pro tier user whose plan does NOT include a weekly
+    // TOKENS_LIMIT bucket. The HUD must hide the `wk:` segment in this case.
+    const response = {
+      data: {
+        limits: [
+          {
+            type: 'TIME_LIMIT',
+            unit: 5,
+            number: 1,
+            usage: 1000,
+            currentValue: 1000,
+            remaining: 0,
+            percentage: 100,
+            nextResetTime: 1777391696996,
+          },
+          {
+            type: 'TOKENS_LIMIT',
+            unit: 3,
+            number: 5,
+            percentage: 1,
+            nextResetTime: 1776190484314,
+          },
+        ],
+        level: 'pro',
+      },
+    };
+
+    const result = parseZaiResponse(response);
+    expect(result).not.toBeNull();
+    expect(result!.fiveHourPercent).toBe(1);
+    expect(result!.fiveHourResetsAt).toBeInstanceOf(Date);
+    expect(result!.fiveHourResetsAt!.getTime()).toBe(1776190484314);
+    expect(result!.monthlyPercent).toBe(100);
+    expect(result!.monthlyResetsAt).toBeInstanceOf(Date);
+    expect(result!.monthlyResetsAt!.getTime()).toBe(1777391696996);
+    // Critical: weekly fields must remain undefined so HUD hides `wk:` segment
+    expect(result!.weeklyPercent).toBeUndefined();
+    expect(result!.weeklyResetsAt).toBeUndefined();
+  });
+
   it('classifies by unit code even when weekly.nextResetTime < 5h.nextResetTime', () => {
     // Edge case: in the final hours before a weekly reset, the weekly
     // bucket's nextResetTime can be sooner than the 5-hour bucket's. Under a
