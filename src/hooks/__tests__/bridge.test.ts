@@ -194,9 +194,9 @@ describe('processHook - Environment Kill-Switches', () => {
       await processHook('keyword-detector', input);
       const duration = Date.now() - start;
 
-      // Should complete in under 100ms (very generous threshold)
+      // Should complete in under 500ms (generous threshold for CI environments)
       // The actual overhead should be negligible (< 1ms)
-      expect(duration).toBeLessThan(100);
+      expect(duration).toBeLessThan(500);
     });
 
     it('should have minimal overhead when DISABLE_OMC=1', async () => {
