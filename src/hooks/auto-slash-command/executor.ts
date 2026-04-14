@@ -22,7 +22,7 @@ import { formatOmcCliInvocation, rewriteOmcCliInvocations } from '../../utils/om
 import { parseSkillPipelineMetadata, renderSkillPipelineGuidance } from '../../utils/skill-pipeline.js';
 import { renderSkillResourcesGuidance } from '../../utils/skill-resources.js';
 import { renderSkillRuntimeGuidance } from '../../features/builtin-skills/runtime-guidance.js';
-import { getSkillsDir } from '../../features/builtin-skills/skills.js';
+import { getSkillsDir, renderBundledSkillBody } from '../../features/builtin-skills/skills.js';
 
 /** Claude config directory */
 const CLAUDE_CONFIG_DIR = getClaudeConfigDir();
@@ -316,7 +316,10 @@ function formatCommandTemplate(cmd: CommandInfo, args: string): string {
 
   // Resolve arguments in content, then execute any live-data commands
   const resolvedContent = resolveArguments(cmd.content || '', displayArgs);
-  const injectedContent = rewriteOmcCliInvocations(resolveLiveData(resolvedContent));
+  const baseContent = resolveLiveData(resolvedContent);
+  const injectedContent = cmd.scope === 'skill'
+    ? renderBundledSkillBody(cmd.metadata.name, baseContent)
+    : rewriteOmcCliInvocations(baseContent);
   const runtimeGuidance = cmd.scope === 'skill' && !isDeepInterviewAutoresearch
     ? renderSkillRuntimeGuidance(cmd.metadata.name)
     : '';

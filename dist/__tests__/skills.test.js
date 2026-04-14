@@ -184,6 +184,29 @@ describe('Builtin Skills', () => {
             expect(skill?.template).toContain('`lib/`');
             expect(skill?.template).toContain('`psm.sh`');
         });
+        it('stages mcp-setup AskUserQuestion menus so each prompt stays within the current option limit', () => {
+            const skill = getBuiltinSkill('mcp-setup');
+            expect(skill).toBeDefined();
+            const template = skill.template;
+            expect(template).toContain('no more than 3 options per question');
+            const blocks = template
+                .split(/AskUserQuestion(?: with [^:\n]+)?[:]?/g)
+                .slice(1)
+                .map((block) => block.split(/## Step|### Step|### For |## Custom MCP Server/)[0]);
+            expect(blocks.length).toBeGreaterThanOrEqual(3);
+            for (const block of blocks) {
+                const optionLines = block
+                    .split('\n')
+                    .map((line) => line.trim())
+                    .filter((line) => /^\d+\. \*\*/.test(line));
+                expect(optionLines.length).toBeLessThanOrEqual(3);
+            }
+            expect(template).toContain('Recommended starter setup');
+            expect(template).toContain('Individual popular server');
+            expect(template).toContain('More server choices');
+            expect(template).not.toContain('5. **All of the above**');
+            expect(template).not.toContain('6. **Custom**');
+        });
         it('should emphasize process-first install routing in the setup skill', () => {
             const skill = getBuiltinSkill('setup');
             expect(skill).toBeDefined();
@@ -303,12 +326,14 @@ describe('Builtin Skills', () => {
             expect(t).toContain('Gate: ≤15% ambiguity'); // ASCII pipeline diagram
             expect(t).toContain('(threshold: 15%).'); // Early-exit example message
             expect(t).toContain('ambiguity ≤ 15%'); // Advanced pipeline description
+            expect(t).toContain('"ambiguityThreshold": 0.15,'); // Advanced config snippet
             // Ensure none of the conflicting hardcoded 20% signals remain at those sites
             expect(t).not.toContain('(default: 20%)');
             expect(t).not.toContain('(default 0.2)');
             expect(t).not.toContain('Gate: ≤20% ambiguity');
             expect(t).not.toContain('(threshold: 20%).');
             expect(t).not.toContain('ambiguity ≤ 20%');
+            expect(t).not.toContain('"ambiguityThreshold": 0.2,');
         });
         it('rewrites built-in skill command examples to plugin-safe bridge invocations when omc is unavailable', () => {
             process.env.CLAUDE_PLUGIN_ROOT = '/plugin-root';

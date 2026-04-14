@@ -369,6 +369,7 @@ describe('Builtin Skills', () => {
       expect(t).toContain('Gate: ≤15% ambiguity');    // ASCII pipeline diagram
       expect(t).toContain('(threshold: 15%).');       // Early-exit example message
       expect(t).toContain('ambiguity ≤ 15%');         // Advanced pipeline description
+      expect(t).toContain('"ambiguityThreshold": 0.15,'); // Advanced config snippet
 
       // Ensure none of the conflicting hardcoded 20% signals remain at those sites
       expect(t).not.toContain('(default: 20%)');
@@ -376,6 +377,7 @@ describe('Builtin Skills', () => {
       expect(t).not.toContain('Gate: ≤20% ambiguity');
       expect(t).not.toContain('(threshold: 20%).');
       expect(t).not.toContain('ambiguity ≤ 20%');
+      expect(t).not.toContain('"ambiguityThreshold": 0.2,');
     });
 
     it('rewrites built-in skill command examples to plugin-safe bridge invocations when omc is unavailable', () => {
