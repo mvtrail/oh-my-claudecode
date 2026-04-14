@@ -126,7 +126,11 @@ jobs:
       # some versions, step 6 passes vacuously. Mitigation: CI failure on any
       # stderr still catches hook/runtime misconfigurations.
 
+      # NOTE: secrets.ANTHROPIC_API_KEY is unavailable on fork PRs. Skip this
+      # step on forks to avoid false failures; steps 3-5 still run and validate
+      # the omc update path on all PRs.
       - name: Trigger session-start hook via Claude Code
+        if: github.event.repository.fork == false
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           HOME: ${{ env.HOME }}
