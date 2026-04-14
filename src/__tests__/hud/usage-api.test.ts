@@ -132,7 +132,7 @@ describe('parseZaiResponse', () => {
     expect(result!.monthlyResetsAt).toBeInstanceOf(Date);
   });
 
-  it('does not set weeklyPercent (z.ai has no weekly quota)', () => {
+  it('omits weeklyPercent when API returns a single TOKENS_LIMIT (free/basic tier)', () => {
     const response = {
       data: {
         limits: [
@@ -144,6 +144,7 @@ describe('parseZaiResponse', () => {
     const result = parseZaiResponse(response);
     expect(result).not.toBeNull();
     expect(result!.weeklyPercent).toBeUndefined();
+    expect(result!.weeklyResetsAt).toBeUndefined();
   });
 
   it('clamps percentages to 0-100', () => {
@@ -195,6 +196,119 @@ describe('parseZaiResponse', () => {
     expect(result).not.toBeNull();
     expect(result!.monthlyPercent).toBe(50);
     expect(result!.monthlyResetsAt).toBeNull();
+  });
+
+  it('parses two TOKENS_LIMIT entries as 5-hour + weekly buckets (pro tier fixture)', () => {
+    // Real z.ai pro tier response payload shared by a user
+    const response = {
+      data: {
+        limits: [
+          { type: 'TOKENS_LIMIT', unit: 3, number: 5, percentage: 1, nextResetTime: 1776180480445 },
+          { type: 'TOKENS_LIMIT', unit: 6, number: 1, percentage: 65, nextResetTime: 1776303517998 },
+          { type: 'TIME_LIMIT', unit: 5, number: 1, percentage: 1, nextResetTime: 1778290717998 },
+        ],
+        level: 'pro',
+      },
+    };
+
+    const result = parseZaiResponse(response);
+    expect(result).not.toBeNull();
+    expect(result!.fiveHourPercent).toBe(1);
+    expect(result!.weeklyPercent).toBe(65);
+    expect(result!.monthlyPercent).toBe(1);
+    expect(result!.fiveHourResetsAt).toBeInstanceOf(Date);
+    expect(result!.fiveHourResetsAt!.getTime()).toBe(1776180480445);
+    expect(result!.weeklyResetsAt).toBeInstanceOf(Date);
+    expect(result!.weeklyResetsAt!.getTime()).toBe(1776303517998);
+    expect(result!.monthlyResetsAt).toBeInstanceOf(Date);
+    expect(result!.monthlyResetsAt!.getTime()).toBe(1778290717998);
+  });
+
+  it('is robust to TOKENS_LIMIT array order (weekly first, 5-hour second)', () => {
+    const response = {
+      data: {
+        limits: [
+          // Deliberately reversed from the canonical order
+          { type: 'TOKENS_LIMIT', percentage: 65, nextResetTime: 1776303517998 },
+          { type: 'TOKENS_LIMIT', percentage: 1, nextResetTime: 1776180480445 },
+        ],
+      },
+    };
+
+    const result = parseZaiResponse(response);
+    expect(result).not.toBeNull();
+    expect(result!.fiveHourPercent).toBe(1);
+    expect(result!.weeklyPercent).toBe(65);
+  });
+
+  it('pushes TOKENS_LIMIT with missing nextResetTime into the weekly slot', () => {
+    const response = {
+      data: {
+        limits: [
+          { type: 'TOKENS_LIMIT', percentage: 20, nextResetTime: 1776180480445 },
+          { type: 'TOKENS_LIMIT', percentage: 80 }, // no nextResetTime
+        ],
+      },
+    };
+
+    const result = parseZaiResponse(response);
+    expect(result).not.toBeNull();
+    expect(result!.fiveHourPercent).toBe(20);
+    expect(result!.fiveHourResetsAt).toBeInstanceOf(Date);
+    expect(result!.weeklyPercent).toBe(80);
+    expect(result!.weeklyResetsAt).toBeNull();
+  });
+
+  it('treats nextResetTime === 0 the same as missing for sort purposes', () => {
+    const response = {
+      data: {
+        limits: [
+          { type: 'TOKENS_LIMIT', percentage: 30, nextResetTime: 0 },
+          { type: 'TOKENS_LIMIT', percentage: 70, nextResetTime: 1776180480445 },
+        ],
+      },
+    };
+
+    const result = parseZaiResponse(response);
+    expect(result).not.toBeNull();
+    expect(result!.fiveHourPercent).toBe(70);
+    expect(result!.fiveHourResetsAt).toBeInstanceOf(Date);
+    expect(result!.weeklyPercent).toBe(30);
+    expect(result!.weeklyResetsAt).toBeNull();
+  });
+
+  it('uses only the first two TOKENS_LIMIT entries (by reset time) when 3+ exist', () => {
+    const response = {
+      data: {
+        limits: [
+          { type: 'TOKENS_LIMIT', percentage: 10, nextResetTime: 1776180480445 }, // earliest -> 5h
+          { type: 'TOKENS_LIMIT', percentage: 65, nextResetTime: 1776303517998 }, // middle -> weekly
+          { type: 'TOKENS_LIMIT', percentage: 90, nextResetTime: 1778290717998 }, // latest -> ignored
+        ],
+      },
+    };
+
+    const result = parseZaiResponse(response);
+    expect(result).not.toBeNull();
+    expect(result!.fiveHourPercent).toBe(10);
+    expect(result!.weeklyPercent).toBe(65);
+  });
+
+  it('tie-breaks equal nextResetTime by smaller percentage -> 5-hour slot', () => {
+    const sameReset = 1776180480445;
+    const response = {
+      data: {
+        limits: [
+          { type: 'TOKENS_LIMIT', percentage: 80, nextResetTime: sameReset },
+          { type: 'TOKENS_LIMIT', percentage: 20, nextResetTime: sameReset },
+        ],
+      },
+    };
+
+    const result = parseZaiResponse(response);
+    expect(result).not.toBeNull();
+    expect(result!.fiveHourPercent).toBe(20);
+    expect(result!.weeklyPercent).toBe(80);
   });
 });
 
