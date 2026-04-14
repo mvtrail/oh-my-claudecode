@@ -96,9 +96,22 @@ interface ZaiQuotaResponse {
       currentValue?: number;
       usage?: number;
       nextResetTime?: number; // Unix timestamp in milliseconds
+      // Window descriptor — observed values (undocumented by z.ai):
+      //   unit=3 with TOKENS_LIMIT → hour-based (5-hour bucket)
+      //   unit=6 with TOKENS_LIMIT → week-based (weekly bucket)
+      //   unit=5 with TIME_LIMIT   → request-count window (monthly-ish)
+      unit?: number;
+      number?: number;
     }>;
   };
 }
+
+// z.ai `unit` code observed for the weekly TOKENS_LIMIT bucket on pro+ tiers.
+// Classification by `unit` is preferred over nextResetTime sorting because
+// the absolute reset timestamp can invert (e.g., in the final hours before a
+// weekly reset, weekly.nextResetTime can be smaller than 5h.nextResetTime,
+// which would swap the buckets under a naive sort).
+const ZAI_UNIT_WEEK = 6;
 
 /**
  * Check if a URL points to z.ai (exact hostname match)
@@ -847,10 +860,15 @@ export function parseUsageResponse(response: UsageApiResponse): RateLimits | nul
  * z.ai may return one or two `TOKENS_LIMIT` entries:
  *   - free/basic tier: single TOKENS_LIMIT (5-hour window only)
  *   - pro+ tier: two TOKENS_LIMIT entries (5-hour + weekly windows)
- * Observed on pro tier: `unit: 3` correlates with the 5-hour bucket and
- * `unit: 6` with the weekly bucket, but these enum codes are undocumented,
- * so we disambiguate by `nextResetTime` ordering instead (shorter reset
- * window -> 5-hour slot; longer reset window -> weekly slot).
+ *
+ * Classification is primarily by the entry's `unit` field (window type),
+ * not `nextResetTime`: the weekly bucket's nextResetTime can be smaller
+ * than the 5-hour bucket's in the final hours before a weekly reset, which
+ * would swap the slots under a naive reset-time sort.
+ *
+ * Fallback: if the `unit` field is absent (older/unknown schema), the code
+ * still falls back to nextResetTime ordering so existing responses without
+ * `unit` continue to work.
  */
 export function parseZaiResponse(response: ZaiQuotaResponse): RateLimits | null {
   const limits = response.data?.limits;
@@ -860,24 +878,6 @@ export function parseZaiResponse(response: ZaiQuotaResponse): RateLimits | null 
   const timeLimit = limits.find(l => l.type === 'TIME_LIMIT');
 
   if (allTokensLimits.length === 0 && !timeLimit) return null;
-
-  // Sort TOKENS_LIMIT entries by nextResetTime ascending so the shortest
-  // reset window claims the 5-hour slot. Entries with missing/zero
-  // nextResetTime are disqualified from the 5-hour slot (pushed to end).
-  // Tie-break on equal reset time: smaller percentage wins the 5-hour slot
-  // (empirically the 5-hour window cycles faster so it consumes more slowly).
-  const tokensLimits = allTokensLimits.slice().sort((a, b) => {
-    const aTime = a.nextResetTime && a.nextResetTime > 0 ? a.nextResetTime : Infinity;
-    const bTime = b.nextResetTime && b.nextResetTime > 0 ? b.nextResetTime : Infinity;
-    if (aTime !== bTime) return aTime - bTime;
-    return (a.percentage ?? 0) - (b.percentage ?? 0);
-  });
-
-  if (allTokensLimits.length > 2 && process.env.OMC_DEBUG) {
-    console.error(
-      `[usage-api] z.ai returned ${allTokensLimits.length} TOKENS_LIMIT entries; using first two by reset time`,
-    );
-  }
 
   // Parse nextResetTime (Unix timestamp in milliseconds) to Date
   const parseResetTime = (timestamp: number | undefined): Date | null => {
@@ -890,8 +890,45 @@ export function parseZaiResponse(response: ZaiQuotaResponse): RateLimits | null 
     }
   };
 
-  const fiveHourBucket = tokensLimits[0];
-  const weeklyBucket = tokensLimits[1]; // undefined on free/basic tier
+  // Bucket assignment:
+  //   1. Any entry with unit === ZAI_UNIT_WEEK is the weekly bucket.
+  //   2. Among remaining (non-weekly) entries, the one with the smallest
+  //      positive nextResetTime is the 5-hour bucket; ties break on smaller
+  //      percentage.
+  //   3. If no weekly-unit entry exists, fall back to the legacy
+  //      nextResetTime sort across all TOKENS_LIMIT entries (sorted[0] = 5h,
+  //      sorted[1] = weekly) so older/unknown schemas still parse.
+  const sortByResetTime = <T extends { nextResetTime?: number; percentage?: number }>(
+    a: T,
+    b: T,
+  ): number => {
+    const aTime = a.nextResetTime && a.nextResetTime > 0 ? a.nextResetTime : Infinity;
+    const bTime = b.nextResetTime && b.nextResetTime > 0 ? b.nextResetTime : Infinity;
+    if (aTime !== bTime) return aTime - bTime;
+    return (a.percentage ?? 0) - (b.percentage ?? 0);
+  };
+
+  const weeklyByUnit = allTokensLimits.find(l => l.unit === ZAI_UNIT_WEEK);
+  const nonWeekly = allTokensLimits.filter(l => l.unit !== ZAI_UNIT_WEEK);
+
+  type TokensLimit = typeof allTokensLimits[number];
+  let fiveHourBucket: TokensLimit | undefined;
+  let weeklyBucket: TokensLimit | undefined;
+
+  if (weeklyByUnit) {
+    weeklyBucket = weeklyByUnit;
+    fiveHourBucket = nonWeekly.slice().sort(sortByResetTime)[0];
+  } else {
+    const sorted = allTokensLimits.slice().sort(sortByResetTime);
+    fiveHourBucket = sorted[0];
+    weeklyBucket = sorted[1];
+  }
+
+  if (allTokensLimits.length > 2 && process.env.OMC_DEBUG) {
+    console.error(
+      `[usage-api] z.ai returned ${allTokensLimits.length} TOKENS_LIMIT entries; using unit-based classification`,
+    );
+  }
 
   const result: RateLimits = {
     fiveHourPercent: clamp(fiveHourBucket?.percentage),
