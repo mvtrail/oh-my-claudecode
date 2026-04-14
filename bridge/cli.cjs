@@ -16960,6 +16960,1086 @@ var init_cancel = __esm({
   }
 });
 
+// src/hooks/persistent-mode/index.ts
+var persistent_mode_exports = {};
+__export(persistent_mode_exports, {
+  checkPersistentModes: () => checkPersistentModes,
+  clearToolErrorState: () => clearToolErrorState,
+  createHookOutput: () => createHookOutput,
+  getIdleNotificationCooldownSeconds: () => getIdleNotificationCooldownSeconds,
+  getToolErrorRetryGuidance: () => getToolErrorRetryGuidance,
+  readLastToolError: () => readLastToolError,
+  recordIdleNotificationSent: () => recordIdleNotificationSent,
+  resetTodoContinuationAttempts: () => resetTodoContinuationAttempts,
+  shouldSendIdleNotification: () => shouldSendIdleNotification,
+  shouldWakeOpenClawOnStop: () => shouldWakeOpenClawOnStop,
+  shouldWriteStateBack: () => shouldWriteStateBack
+});
+function shouldWriteStateBack(statePath) {
+  return Boolean(statePath && (0, import_fs53.existsSync)(statePath));
+}
+function isSessionCancelInProgress(directory, sessionId) {
+  let cancelSignalPath;
+  if (sessionId) {
+    try {
+      cancelSignalPath = resolveSessionStatePath("cancel-signal", sessionId, directory);
+    } catch {
+    }
+  }
+  if (!cancelSignalPath) {
+    cancelSignalPath = (0, import_path63.join)(getOmcRoot(directory), "state", "cancel-signal-state.json");
+  }
+  if (!(0, import_fs53.existsSync)(cancelSignalPath)) {
+    return false;
+  }
+  try {
+    const raw = JSON.parse((0, import_fs53.readFileSync)(cancelSignalPath, "utf-8"));
+    const now = Date.now();
+    const expiresAt = raw.expires_at ? new Date(raw.expires_at).getTime() : NaN;
+    const requestedAt = raw.requested_at ? new Date(raw.requested_at).getTime() : NaN;
+    const fallbackExpiry = Number.isFinite(requestedAt) ? requestedAt + CANCEL_SIGNAL_TTL_MS2 : NaN;
+    const effectiveExpiry = Number.isFinite(expiresAt) ? expiresAt : fallbackExpiry;
+    if (!Number.isFinite(effectiveExpiry) || effectiveExpiry <= now) {
+      (0, import_fs53.unlinkSync)(cancelSignalPath);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function isStaleState(state) {
+  if (!state || typeof state !== "object") {
+    return true;
+  }
+  const stateRecord = state;
+  const timestamps = [stateRecord.last_checked_at, stateRecord.updated_at, stateRecord.started_at].filter((value) => typeof value === "string" && value.length > 0);
+  const mostRecent = timestamps.reduce((max, value) => {
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) && parsed > max ? parsed : max;
+  }, 0);
+  if (mostRecent === 0) {
+    return true;
+  }
+  return Date.now() - mostRecent > STALE_STATE_THRESHOLD_MS;
+}
+function readLastToolError(directory) {
+  const stateDir = (0, import_path63.join)(getOmcRoot(directory), "state");
+  const errorPath = (0, import_path63.join)(stateDir, "last-tool-error.json");
+  try {
+    if (!(0, import_fs53.existsSync)(errorPath)) {
+      return null;
+    }
+    const content = (0, import_fs53.readFileSync)(errorPath, "utf-8");
+    const toolError = JSON.parse(content);
+    if (!toolError || !toolError.timestamp) {
+      return null;
+    }
+    const parsedTime = new Date(toolError.timestamp).getTime();
+    if (!Number.isFinite(parsedTime)) {
+      return null;
+    }
+    const age = Date.now() - parsedTime;
+    if (age > 6e4) {
+      return null;
+    }
+    return toolError;
+  } catch {
+    return null;
+  }
+}
+function clearToolErrorState(directory) {
+  const stateDir = (0, import_path63.join)(getOmcRoot(directory), "state");
+  const errorPath = (0, import_path63.join)(stateDir, "last-tool-error.json");
+  try {
+    if ((0, import_fs53.existsSync)(errorPath)) {
+      (0, import_fs53.unlinkSync)(errorPath);
+    }
+  } catch {
+  }
+}
+function getToolErrorRetryGuidance(toolError) {
+  if (!toolError) {
+    return "";
+  }
+  const retryCount = toolError.retry_count || 1;
+  const toolName = toolError.tool_name || "unknown";
+  const error2 = toolError.error || "Unknown error";
+  if (retryCount >= 5) {
+    return `[TOOL ERROR - ALTERNATIVE APPROACH NEEDED]
+The "${toolName}" operation has failed ${retryCount} times.
+
+STOP RETRYING THE SAME APPROACH. Instead:
+1. Try a completely different command or approach
+2. Check if the environment/dependencies are correct
+3. Consider breaking down the task differently
+4. If stuck, ask the user for guidance
+
+`;
+  }
+  return `[TOOL ERROR - RETRY REQUIRED]
+The previous "${toolName}" operation failed.
+
+Error: ${error2}
+
+REQUIRED ACTIONS:
+1. Analyze why the command failed
+2. Fix the issue (wrong path? permission? syntax? missing dependency?)
+3. RETRY the operation with corrected parameters
+4. Continue with your original task after success
+
+Do NOT skip this step. Do NOT move on without fixing the error.
+
+`;
+}
+function resetTodoContinuationAttempts(sessionId) {
+  todoContinuationAttempts.delete(sessionId);
+}
+function getIdleNotificationCooldownSeconds() {
+  for (const configPath of getGlobalOmcConfigCandidates("config.json")) {
+    try {
+      if (!(0, import_fs53.existsSync)(configPath)) continue;
+      const config2 = JSON.parse((0, import_fs53.readFileSync)(configPath, "utf-8"));
+      const cooldown = config2?.notificationCooldown;
+      const val = cooldown?.sessionIdleSeconds;
+      if (typeof val === "number" && Number.isFinite(val)) return Math.max(0, val);
+      return 60;
+    } catch {
+      return 60;
+    }
+  }
+  return 60;
+}
+function getGlobalIdleNotificationCooldownPath(stateDir) {
+  return (0, import_path63.join)(stateDir, "idle-notif-cooldown.json");
+}
+function getIdleNotificationCooldownPath(stateDir, sessionId) {
+  if (sessionId && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/.test(sessionId)) {
+    return (0, import_path63.join)(stateDir, "sessions", sessionId, "idle-notif-cooldown.json");
+  }
+  return getGlobalIdleNotificationCooldownPath(stateDir);
+}
+function readIdleNotificationCooldownRecord(cooldownPath) {
+  try {
+    if (!(0, import_fs53.existsSync)(cooldownPath)) return null;
+    return JSON.parse((0, import_fs53.readFileSync)(cooldownPath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+function isRepeatedZeroBacklogCooldown(record2, repoState) {
+  return Boolean(
+    repoState?.backlogZero && record2?.backlogZero === true && typeof record2.repoSignature === "string" && record2.repoSignature === repoState.signature
+  );
+}
+function hasRepeatedZeroBacklogCooldown(stateDir, sessionId, repoState) {
+  const cooldownPath = getIdleNotificationCooldownPath(stateDir, sessionId);
+  const cooldownRecord = readIdleNotificationCooldownRecord(cooldownPath);
+  if (isRepeatedZeroBacklogCooldown(cooldownRecord, repoState)) {
+    return true;
+  }
+  if (cooldownPath !== getGlobalIdleNotificationCooldownPath(stateDir)) {
+    const globalRecord = readIdleNotificationCooldownRecord(getGlobalIdleNotificationCooldownPath(stateDir));
+    if (isRepeatedZeroBacklogCooldown(globalRecord, repoState)) {
+      return true;
+    }
+  }
+  return false;
+}
+function shouldWakeOpenClawOnStop(stateDir, sessionId, repoState) {
+  return !hasRepeatedZeroBacklogCooldown(stateDir, sessionId, repoState);
+}
+function shouldSendIdleNotification(stateDir, sessionId, repoState) {
+  const cooldownSecs = getIdleNotificationCooldownSeconds();
+  const cooldownPath = getIdleNotificationCooldownPath(stateDir, sessionId);
+  const cooldownRecord = readIdleNotificationCooldownRecord(cooldownPath);
+  if (hasRepeatedZeroBacklogCooldown(stateDir, sessionId, repoState)) {
+    return false;
+  }
+  if (repoState && typeof cooldownRecord?.repoSignature === "string") {
+    if (cooldownRecord.repoSignature !== repoState.signature) {
+      return true;
+    }
+  }
+  if (cooldownSecs === 0) return true;
+  if (typeof cooldownRecord?.lastSentAt === "string") {
+    const elapsed = (Date.now() - new Date(cooldownRecord.lastSentAt).getTime()) / 1e3;
+    if (Number.isFinite(elapsed) && elapsed < cooldownSecs) return false;
+  }
+  return true;
+}
+function recordIdleNotificationSent(stateDir, sessionId, repoState) {
+  const cooldownPath = getIdleNotificationCooldownPath(stateDir, sessionId);
+  try {
+    const record2 = {
+      lastSentAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    if (repoState) {
+      record2.repoSignature = repoState.signature;
+      record2.backlogZero = repoState.backlogZero;
+    }
+    atomicWriteJsonSync(cooldownPath, record2);
+    if (repoState?.backlogZero && cooldownPath !== getGlobalIdleNotificationCooldownPath(stateDir)) {
+      atomicWriteJsonSync(getGlobalIdleNotificationCooldownPath(stateDir), record2);
+    }
+  } catch {
+  }
+}
+function readTranscriptTail(transcriptPath) {
+  const size = (0, import_fs53.statSync)(transcriptPath).size;
+  if (size <= TRANSCRIPT_TAIL_BYTES) {
+    return (0, import_fs53.readFileSync)(transcriptPath, "utf-8");
+  }
+  const fd = (0, import_fs53.openSync)(transcriptPath, "r");
+  try {
+    const offset = size - TRANSCRIPT_TAIL_BYTES;
+    const buf = Buffer.allocUnsafe(TRANSCRIPT_TAIL_BYTES);
+    const bytesRead = (0, import_fs53.readSync)(fd, buf, 0, TRANSCRIPT_TAIL_BYTES, offset);
+    return buf.subarray(0, bytesRead).toString("utf-8");
+  } finally {
+    (0, import_fs53.closeSync)(fd);
+  }
+}
+function readTranscriptTailLines(transcriptPath) {
+  const content = readTranscriptTail(transcriptPath);
+  const lines = content.split("\n");
+  try {
+    if ((0, import_fs53.statSync)(transcriptPath).size > TRANSCRIPT_TAIL_BYTES && lines.length > 0) {
+      lines.shift();
+    }
+  } catch {
+    return lines;
+  }
+  return lines;
+}
+function normalizeReviewerPath(subagentType) {
+  if (typeof subagentType !== "string") {
+    return null;
+  }
+  const normalized = subagentType.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  const baseName = normalized.includes(":") ? normalized.slice(normalized.lastIndexOf(":") + 1) : normalized;
+  if (baseName === "architect" || baseName.startsWith("architect-")) {
+    return "architect";
+  }
+  if (baseName === "critic" || baseName.startsWith("critic-")) {
+    return "critic";
+  }
+  return null;
+}
+function isCodexReviewerCommand(command) {
+  return typeof command === "string" && /\bask\s+codex\s+--agent-prompt\s+critic\b/i.test(command);
+}
+function extractTranscriptText(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content.map((item) => extractTranscriptText(item)).filter(Boolean).join("\n");
+  }
+  if (!content || typeof content !== "object") {
+    return "";
+  }
+  const record2 = content;
+  const directText = typeof record2.text === "string" ? record2.text : "";
+  const nestedContent = "content" in record2 ? extractTranscriptText(record2.content) : "";
+  return [directText, nestedContent].filter(Boolean).join("\n");
+}
+function matchesVerificationReviewerPath(reviewerPath, verificationState) {
+  const expected = verificationState?.critic_mode ?? "architect";
+  return reviewerPath === expected;
+}
+function checkReviewerAuthoredApprovalInMessages(transcriptPath, verificationState) {
+  const reviewerToolUses = /* @__PURE__ */ new Map();
+  for (const line of readTranscriptTailLines(transcriptPath)) {
+    if (!line.trim()) {
+      continue;
+    }
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const content = entry.message?.content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const block of content) {
+      if (block?.type === "tool_use" && block.id && block.name) {
+        if (REVIEWER_TASK_TOOL_NAMES.has(block.name)) {
+          const reviewerPath = normalizeReviewerPath(block.input?.subagent_type);
+          if (reviewerPath && matchesVerificationReviewerPath(reviewerPath, verificationState)) {
+            reviewerToolUses.set(block.id, reviewerPath);
+          }
+          continue;
+        }
+        if (REVIEWER_COMMAND_TOOL_NAMES.has(block.name)) {
+          const command = block.input?.command;
+          if (isCodexReviewerCommand(command) && matchesVerificationReviewerPath("codex", verificationState)) {
+            reviewerToolUses.set(block.id, "codex");
+          }
+        }
+        continue;
+      }
+      if (block?.type !== "tool_result" || !block.tool_use_id) {
+        continue;
+      }
+      if (!reviewerToolUses.has(block.tool_use_id)) {
+        continue;
+      }
+      const reviewerOutput = extractTranscriptText(block.content);
+      if (reviewerOutput && detectArchitectApproval(reviewerOutput, verificationState)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+function estimateTranscriptContextPercent(transcriptPath) {
+  if (!transcriptPath || !(0, import_fs53.existsSync)(transcriptPath)) {
+    return 0;
+  }
+  try {
+    const content = readTranscriptTail(transcriptPath);
+    const windowMatches = [...content.matchAll(/"context_window"\s{0,5}:\s{0,5}(\d+)/g)];
+    const inputMatches = [...content.matchAll(/"input_tokens"\s{0,5}:\s{0,5}(\d+)/g)];
+    const lastWindow = windowMatches.at(-1)?.[1];
+    const lastInput = inputMatches.at(-1)?.[1];
+    if (!lastWindow || !lastInput) {
+      return 0;
+    }
+    const contextWindow = parseInt(lastWindow, 10);
+    const inputTokens = parseInt(lastInput, 10);
+    if (!Number.isFinite(contextWindow) || contextWindow <= 0 || !Number.isFinite(inputTokens)) {
+      return 0;
+    }
+    return Math.round(inputTokens / contextWindow * 100);
+  } catch {
+    return 0;
+  }
+}
+function isCriticalContextStop(stopContext) {
+  if (isContextLimitStop(stopContext)) {
+    return true;
+  }
+  const transcriptPath = stopContext?.transcript_path ?? stopContext?.transcriptPath;
+  return estimateTranscriptContextPercent(transcriptPath) >= CRITICAL_CONTEXT_STOP_PERCENT;
+}
+function isAwaitingConfirmation(state) {
+  if (!state || typeof state !== "object") {
+    return false;
+  }
+  const stateRecord = state;
+  if (stateRecord.awaiting_confirmation !== true) {
+    return false;
+  }
+  const setAt = typeof stateRecord.awaiting_confirmation_set_at === "string" && stateRecord.awaiting_confirmation_set_at || typeof stateRecord.started_at === "string" && stateRecord.started_at || null;
+  if (!setAt) {
+    return false;
+  }
+  const setAtMs = new Date(setAt).getTime();
+  if (!Number.isFinite(setAtMs)) {
+    return false;
+  }
+  return Date.now() - setAtMs < AWAITING_CONFIRMATION_TTL_MS;
+}
+function checkArchitectApprovalInTranscript(sessionId, verificationState) {
+  const claudeDir = getClaudeConfigDir();
+  const possiblePaths = [(0, import_path63.join)(claudeDir, "sessions", sessionId, "messages.json")];
+  for (const transcriptPath of possiblePaths) {
+    if (!(0, import_fs53.existsSync)(transcriptPath)) {
+      continue;
+    }
+    try {
+      if (checkReviewerAuthoredApprovalInMessages(transcriptPath, verificationState)) {
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+function checkArchitectRejectionInTranscript(sessionId) {
+  const claudeDir = getClaudeConfigDir();
+  const possiblePaths = [
+    (0, import_path63.join)(claudeDir, "sessions", sessionId, "transcript.md"),
+    (0, import_path63.join)(claudeDir, "sessions", sessionId, "messages.json"),
+    (0, import_path63.join)(claudeDir, "transcripts", `${sessionId}.md`)
+  ];
+  for (const transcriptPath of possiblePaths) {
+    if ((0, import_fs53.existsSync)(transcriptPath)) {
+      try {
+        const content = readTranscriptTail(transcriptPath);
+        const result = detectArchitectRejection(content);
+        if (result.rejected) {
+          return result;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+  return { rejected: false, feedback: "" };
+}
+async function checkRalphLoop(sessionId, directory, cancelInProgress) {
+  const workingDir = resolveToWorktreeRoot(directory);
+  const state = readRalphState(workingDir, sessionId);
+  const ralphStatePath = sessionId ? resolveSessionStatePath("ralph", sessionId, workingDir) : resolveStatePath("ralph", workingDir);
+  if (!state || !state.active || isStaleState(state)) {
+    return null;
+  }
+  if (state.session_id && sessionId && state.session_id !== sessionId) {
+    return null;
+  }
+  if (isAwaitingConfirmation(state)) {
+    return null;
+  }
+  if (cancelInProgress) {
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "none"
+    };
+  }
+  if (state.linked_ultrawork) {
+    const ultraworkState = readUltraworkState(workingDir, sessionId);
+    if (!ultraworkState?.active) {
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const restoredState = {
+        active: true,
+        started_at: state.started_at || now,
+        original_prompt: state.prompt || "Ralph loop task",
+        session_id: sessionId,
+        project_path: workingDir,
+        reinforcement_count: 0,
+        last_checked_at: now,
+        linked_to_ralph: true
+      };
+      writeUltraworkState(restoredState, workingDir, sessionId);
+    }
+  }
+  const teamState = readTeamPipelineState(workingDir, sessionId);
+  if (teamState && teamState.active !== void 0 && !isStaleState(teamState)) {
+    const teamPhase = teamState.phase;
+    if (teamPhase === "complete") {
+      clearRalphState(workingDir, sessionId);
+      clearVerificationState(workingDir, sessionId);
+      deactivateUltrawork(workingDir, sessionId);
+      return {
+        shouldBlock: false,
+        message: `[RALPH LOOP COMPLETE - TEAM] Team pipeline completed successfully. Ralph loop ending after ${state.iteration} iteration(s).`,
+        mode: "none"
+      };
+    }
+    if (teamPhase === "failed") {
+      clearRalphState(workingDir, sessionId);
+      clearVerificationState(workingDir, sessionId);
+      deactivateUltrawork(workingDir, sessionId);
+      return {
+        shouldBlock: false,
+        message: `[RALPH LOOP STOPPED - TEAM FAILED] Team pipeline failed. Ralph loop ending after ${state.iteration} iteration(s).`,
+        mode: "none"
+      };
+    }
+    if (teamPhase === "cancelled") {
+      clearRalphState(workingDir, sessionId);
+      clearVerificationState(workingDir, sessionId);
+      deactivateUltrawork(workingDir, sessionId);
+      return {
+        shouldBlock: false,
+        message: `[RALPH LOOP CANCELLED - TEAM] Team pipeline was cancelled. Ralph loop ending after ${state.iteration} iteration(s).`,
+        mode: "none"
+      };
+    }
+  }
+  let verificationState = readVerificationState(workingDir, sessionId);
+  if (verificationState?.pending) {
+    if (sessionId) {
+      if (checkArchitectApprovalInTranscript(sessionId, verificationState)) {
+        if (verificationState.verification_scope === "story" && verificationState.story_id) {
+          markStoryArchitectVerified(workingDir, verificationState.story_id);
+          clearVerificationState(workingDir, sessionId);
+          const refreshedState = readRalphState(workingDir, sessionId);
+          if (refreshedState) {
+            const refreshedPrd = getPrdCompletionStatus(workingDir);
+            refreshedState.current_story_id = refreshedPrd.nextStory?.id;
+            writeRalphState(workingDir, refreshedState, sessionId);
+          }
+          verificationState = readVerificationState(workingDir, sessionId);
+        } else {
+          clearVerificationState(workingDir, sessionId);
+          clearRalphState(workingDir, sessionId);
+          deactivateUltrawork(workingDir, sessionId);
+          const criticLabel = verificationState.critic_mode === "codex" ? "Codex critic" : verificationState.critic_mode === "critic" ? "Critic" : "Architect";
+          return {
+            shouldBlock: false,
+            message: `[RALPH LOOP VERIFIED COMPLETE] ${criticLabel} verified task completion after ${state.iteration} iteration(s). Excellent work!`,
+            mode: "none"
+          };
+        }
+      }
+      const rejection = checkArchitectRejectionInTranscript(sessionId);
+      if (verificationState && rejection.rejected) {
+        if (verificationState.verification_scope === "story" && verificationState.story_id) {
+          markStoryIncomplete(workingDir, verificationState.story_id, rejection.feedback);
+        }
+        recordArchitectFeedback(workingDir, false, rejection.feedback, sessionId);
+        const updatedVerification = readVerificationState(workingDir, sessionId);
+        verificationState = updatedVerification;
+        if (updatedVerification) {
+          const continuationPrompt2 = getArchitectRejectionContinuationPrompt(updatedVerification);
+          return {
+            shouldBlock: true,
+            message: continuationPrompt2,
+            mode: "ralph",
+            metadata: {
+              iteration: state.iteration,
+              maxIterations: state.max_iterations
+            }
+          };
+        }
+      }
+    }
+    if (verificationState?.pending) {
+      const storyUnderReview = verificationState.story_id ? getStory(workingDir, verificationState.story_id) ?? void 0 : void 0;
+      const verificationPrompt = getArchitectVerificationPrompt(verificationState, storyUnderReview);
+      return {
+        shouldBlock: true,
+        message: verificationPrompt,
+        mode: "ralph",
+        metadata: {
+          iteration: state.iteration,
+          maxIterations: state.max_iterations
+        }
+      };
+    }
+  }
+  const prdStatus = getPrdCompletionStatus(workingDir);
+  const currentStory = state.current_story_id ? getStory(workingDir, state.current_story_id) : prdStatus.nextStory;
+  if (currentStory?.passes && currentStory.architectVerified !== true) {
+    const startedVerification = startVerification(
+      workingDir,
+      `Story ${currentStory.id} is marked passes: true and requires architect approval before Ralph can progress.`,
+      state.prompt,
+      state.critic_mode,
+      sessionId,
+      currentStory
+    );
+    return {
+      shouldBlock: true,
+      message: getArchitectVerificationPrompt(startedVerification, currentStory),
+      mode: "ralph",
+      metadata: {
+        iteration: state.iteration,
+        maxIterations: state.max_iterations
+      }
+    };
+  }
+  if (prdStatus.hasPrd && prdStatus.allComplete) {
+    const startedVerification = startVerification(
+      workingDir,
+      `All ${prdStatus.status?.total || 0} PRD stories are marked passes: true.`,
+      state.prompt,
+      state.critic_mode,
+      sessionId
+    );
+    return {
+      shouldBlock: true,
+      message: getArchitectVerificationPrompt(startedVerification),
+      mode: "ralph",
+      metadata: {
+        iteration: state.iteration,
+        maxIterations: state.max_iterations
+      }
+    };
+  }
+  const hardMax = getHardMaxIterations();
+  if (hardMax > 0 && state.iteration >= hardMax) {
+    state.active = false;
+    if (!shouldWriteStateBack(ralphStatePath)) {
+      return {
+        shouldBlock: false,
+        message: "",
+        mode: "none"
+      };
+    }
+    writeRalphState(workingDir, state, sessionId);
+    return {
+      shouldBlock: true,
+      message: `[RALPH - HARD LIMIT] Reached hard max iterations (${hardMax}). Mode auto-disabled. Restart with /oh-my-claudecode:ralph if needed.`,
+      mode: "ralph",
+      metadata: { iteration: state.iteration, maxIterations: state.max_iterations }
+    };
+  }
+  if (state.iteration >= state.max_iterations) {
+    state.max_iterations += 10;
+    if (!shouldWriteStateBack(ralphStatePath)) {
+      return {
+        shouldBlock: false,
+        message: "",
+        mode: "none"
+      };
+    }
+    writeRalphState(workingDir, state, sessionId);
+  }
+  const toolError = readLastToolError(workingDir);
+  const errorGuidance = getToolErrorRetryGuidance(toolError);
+  const newState = incrementRalphIteration(workingDir, sessionId);
+  if (!newState) {
+    return null;
+  }
+  const ralphContext = getRalphContext(workingDir);
+  const prdInstruction = prdStatus.hasPrd ? `2. Check prd.json - verify the current story's acceptance criteria are met, then mark it passes: true. Are ALL stories complete?` : `2. Check your todo list - are ALL items marked complete?`;
+  const continuationPrompt = `<ralph-continuation>
+${errorGuidance ? errorGuidance + "\n" : ""}
+[RALPH - ITERATION ${newState.iteration}/${newState.max_iterations}]
+
+The task is NOT complete yet. Continue working.
+${ralphContext}
+CRITICAL INSTRUCTIONS:
+1. Review your progress and the original task
+${prdInstruction}
+3. Continue from where you left off
+4. When FULLY complete (after ${state.critic_mode === "codex" ? "Codex critic" : state.critic_mode === "critic" ? "Critic" : "Architect"} verification), run \`/oh-my-claudecode:cancel\` to cleanly exit and clean up state files. If cancel fails, retry with \`/oh-my-claudecode:cancel --force\`.
+5. Do NOT stop until the task is truly done
+
+${newState.prompt ? `Original task: ${truncatePromptForEcho(newState.prompt)}` : ""}
+
+</ralph-continuation>
+
+---
+
+`;
+  return {
+    shouldBlock: true,
+    message: continuationPrompt,
+    mode: "ralph",
+    metadata: {
+      iteration: newState.iteration,
+      maxIterations: newState.max_iterations,
+      toolError: toolError || void 0
+    }
+  };
+}
+function readStopBreaker(directory, name, sessionId, ttlMs) {
+  const stateDir = sessionId ? (0, import_path63.join)(getOmcRoot(directory), "state", "sessions", sessionId) : (0, import_path63.join)(getOmcRoot(directory), "state");
+  const breakerPath = (0, import_path63.join)(stateDir, `${name}-stop-breaker.json`);
+  try {
+    if (!(0, import_fs53.existsSync)(breakerPath)) return 0;
+    const raw = JSON.parse((0, import_fs53.readFileSync)(breakerPath, "utf-8"));
+    if (ttlMs && raw.updated_at) {
+      const updatedAt = new Date(raw.updated_at).getTime();
+      if (Number.isFinite(updatedAt) && Date.now() - updatedAt > ttlMs) {
+        (0, import_fs53.unlinkSync)(breakerPath);
+        return 0;
+      }
+    }
+    return typeof raw.count === "number" ? raw.count : 0;
+  } catch {
+    return 0;
+  }
+}
+function writeStopBreaker(directory, name, count, sessionId) {
+  const stateDir = sessionId ? (0, import_path63.join)(getOmcRoot(directory), "state", "sessions", sessionId) : (0, import_path63.join)(getOmcRoot(directory), "state");
+  try {
+    (0, import_fs53.mkdirSync)(stateDir, { recursive: true });
+    const breakerPath = (0, import_path63.join)(stateDir, `${name}-stop-breaker.json`);
+    const data = { count, updated_at: (/* @__PURE__ */ new Date()).toISOString() };
+    atomicWriteJsonSync(breakerPath, data);
+  } catch {
+  }
+}
+async function checkTeamPipeline(sessionId, directory, cancelInProgress) {
+  const workingDir = resolveToWorktreeRoot(directory);
+  const teamState = readTeamPipelineState(workingDir, sessionId);
+  if (!teamState) {
+    return null;
+  }
+  if (!teamState.active) {
+    writeStopBreaker(workingDir, "team-pipeline", 0, sessionId);
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "team"
+    };
+  }
+  if (cancelInProgress) {
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "team"
+    };
+  }
+  const rawPhase = teamState.phase ?? teamState.current_phase ?? teamState.currentStage ?? teamState.current_stage ?? teamState.stage;
+  if (typeof rawPhase !== "string") {
+    return { shouldBlock: false, message: "", mode: "team" };
+  }
+  const phase = rawPhase.trim().toLowerCase();
+  if (phase === "complete" || phase === "completed" || phase === "failed" || phase === "cancelled" || phase === "canceled" || phase === "cancel") {
+    writeStopBreaker(workingDir, "team-pipeline", 0, sessionId);
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "team"
+    };
+  }
+  const KNOWN_ACTIVE_PHASES = /* @__PURE__ */ new Set(["team-plan", "team-prd", "team-exec", "team-verify", "team-fix"]);
+  if (!KNOWN_ACTIVE_PHASES.has(phase)) {
+    return { shouldBlock: false, message: "", mode: "team" };
+  }
+  const rawStatus = teamState.status;
+  const status = typeof rawStatus === "string" ? rawStatus.trim().toLowerCase() : null;
+  if (status === "cancelled" || status === "canceled" || status === "cancel" || status === "failed" || status === "complete" || status === "completed") {
+    writeStopBreaker(workingDir, "team-pipeline", 0, sessionId);
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "team"
+    };
+  }
+  if (teamState.cancel?.requested) {
+    writeStopBreaker(workingDir, "team-pipeline", 0, sessionId);
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "team"
+    };
+  }
+  const breakerCount = readStopBreaker(workingDir, "team-pipeline", sessionId, TEAM_PIPELINE_STOP_BLOCKER_TTL_MS) + 1;
+  if (breakerCount > TEAM_PIPELINE_STOP_BLOCKER_MAX) {
+    writeStopBreaker(workingDir, "team-pipeline", 0, sessionId);
+    return {
+      shouldBlock: false,
+      message: `[TEAM PIPELINE CIRCUIT BREAKER] Stop enforcement exceeded ${TEAM_PIPELINE_STOP_BLOCKER_MAX} reinforcements. Allowing stop to prevent infinite blocking.`,
+      mode: "team"
+    };
+  }
+  writeStopBreaker(workingDir, "team-pipeline", breakerCount, sessionId);
+  return {
+    shouldBlock: true,
+    message: `<team-pipeline-continuation>
+
+[TEAM PIPELINE - PHASE: ${phase.toUpperCase()} | REINFORCEMENT ${breakerCount}/${TEAM_PIPELINE_STOP_BLOCKER_MAX}]
+
+The team pipeline is active in phase "${phase}". Continue working on the team workflow.
+Do not stop until the pipeline reaches a terminal state (complete/failed/cancelled).
+When done, run \`/oh-my-claudecode:cancel\` to cleanly exit.
+
+</team-pipeline-continuation>
+
+---
+
+`,
+    mode: "team",
+    metadata: {
+      phase,
+      tasksCompleted: teamState.execution?.tasks_completed,
+      tasksTotal: teamState.execution?.tasks_total
+    }
+  };
+}
+function getNormalizedRalplanPhase(state) {
+  if (!state || typeof state !== "object") {
+    return null;
+  }
+  const rawPhase = state.current_phase ?? state.phase ?? state.status;
+  if (typeof rawPhase !== "string") {
+    return null;
+  }
+  const phase = rawPhase.trim().toLowerCase();
+  if (!phase) {
+    return null;
+  }
+  if (phase === "handoff" || phase.startsWith("handoff:") || phase.startsWith("handoff-")) {
+    return "handoff";
+  }
+  return phase;
+}
+async function checkRalplan(sessionId, directory, cancelInProgress) {
+  const workingDir = resolveToWorktreeRoot(directory);
+  const state = readModeState("ralplan", workingDir, sessionId);
+  const stateRecord = state;
+  const hasTimestampFields = Boolean(
+    stateRecord && ["last_checked_at", "updated_at", "started_at"].some(
+      (key) => typeof stateRecord[key] === "string" && String(stateRecord[key]).length > 0
+    )
+  );
+  if (!state || !state.active || hasTimestampFields && isStaleState(state)) {
+    return null;
+  }
+  if (sessionId && state.session_id && state.session_id !== sessionId) {
+    return null;
+  }
+  if (isAwaitingConfirmation(state)) {
+    return null;
+  }
+  const currentPhase = getNormalizedRalplanPhase(state);
+  if (currentPhase && RALPLAN_TERMINAL_PHASES.has(currentPhase)) {
+    writeStopBreaker(workingDir, "ralplan", 0, sessionId);
+    return { shouldBlock: false, message: "", mode: "ralplan" };
+  }
+  if (cancelInProgress) {
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "ralplan"
+    };
+  }
+  const activeAgents = getActiveAgentSnapshot(workingDir);
+  const activeAgentStateUpdatedAt = activeAgents.lastUpdatedAt ? new Date(activeAgents.lastUpdatedAt).getTime() : NaN;
+  const hasFreshActiveAgentState = Number.isFinite(activeAgentStateUpdatedAt) && Date.now() - activeAgentStateUpdatedAt <= RALPLAN_ACTIVE_AGENT_RECENCY_WINDOW_MS;
+  if (activeAgents.count > 0 && hasFreshActiveAgentState) {
+    writeStopBreaker(workingDir, "ralplan", 0, sessionId);
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "ralplan"
+    };
+  }
+  const breakerCount = readStopBreaker(workingDir, "ralplan", sessionId, RALPLAN_STOP_BLOCKER_TTL_MS) + 1;
+  if (breakerCount > RALPLAN_STOP_BLOCKER_MAX) {
+    writeStopBreaker(workingDir, "ralplan", 0, sessionId);
+    state.active = false;
+    state.deactivated_reason = "stop_breaker_exhausted";
+    state.completed_at = (/* @__PURE__ */ new Date()).toISOString();
+    writeModeState("ralplan", state, workingDir, sessionId);
+    return {
+      shouldBlock: false,
+      message: `[RALPLAN CIRCUIT BREAKER] Stop enforcement exceeded ${RALPLAN_STOP_BLOCKER_MAX} reinforcements. Allowing stop and deactivating stale ralplan state to prevent infinite restart loops.`,
+      mode: "ralplan"
+    };
+  }
+  writeStopBreaker(workingDir, "ralplan", breakerCount, sessionId);
+  return {
+    shouldBlock: true,
+    message: `<ralplan-continuation>
+
+[RALPLAN - CONSENSUS PLANNING | REINFORCEMENT ${breakerCount}/${RALPLAN_STOP_BLOCKER_MAX}]
+
+The ralplan consensus workflow is active. Continue the Planner/Architect/Critic loop.
+Do not stop until consensus is reached or the workflow completes.
+When done, run \`/oh-my-claudecode:cancel\` to cleanly exit.
+
+</ralplan-continuation>
+
+---
+
+`,
+    mode: "ralplan"
+  };
+}
+async function checkUltrawork(sessionId, directory, _hasIncompleteTodos, cancelInProgress) {
+  const workingDir = resolveToWorktreeRoot(directory);
+  const state = readUltraworkState(workingDir, sessionId);
+  if (!state || !state.active || isStaleState(state)) {
+    return null;
+  }
+  if (state.session_id && sessionId && state.session_id !== sessionId) {
+    return null;
+  }
+  if (isAwaitingConfirmation(state)) {
+    return null;
+  }
+  if (cancelInProgress) {
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "none"
+    };
+  }
+  if (!_hasIncompleteTodos) {
+    deactivateUltrawork(workingDir, sessionId);
+    return {
+      shouldBlock: false,
+      message: "[ULTRAWORK COMPLETE] No incomplete tasks remain. Ultrawork state cleared.",
+      mode: "none"
+    };
+  }
+  const hardMax = getHardMaxIterations();
+  if (hardMax > 0 && state.reinforcement_count >= hardMax) {
+    deactivateUltrawork(workingDir, sessionId);
+    return {
+      shouldBlock: true,
+      message: "[ULTRAWORK - HARD LIMIT] Reached hard max iterations (" + hardMax + "). Mode auto-disabled. Restart with /oh-my-claudecode:ultrawork if needed.",
+      mode: "ultrawork",
+      metadata: { reinforcementCount: state.reinforcement_count }
+    };
+  }
+  const newState = incrementReinforcement(workingDir, sessionId);
+  if (!newState) {
+    return null;
+  }
+  const message = getUltraworkPersistenceMessage(newState);
+  return {
+    shouldBlock: true,
+    message,
+    mode: "ultrawork",
+    metadata: {
+      reinforcementCount: newState.reinforcement_count
+    }
+  };
+}
+async function checkPersistentModes(sessionId, directory, stopContext) {
+  const workingDir = resolveToWorktreeRoot(directory);
+  if (isCriticalContextStop(stopContext)) {
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "none"
+    };
+  }
+  if (isExplicitCancelCommand(stopContext)) {
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "none"
+    };
+  }
+  const cancelInProgress = isSessionCancelInProgress(workingDir, sessionId);
+  if (cancelInProgress) {
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "none"
+    };
+  }
+  if (isUserAbort(stopContext)) {
+    return {
+      shouldBlock: false,
+      message: "",
+      mode: "none"
+    };
+  }
+  if (isRateLimitStop(stopContext)) {
+    return {
+      shouldBlock: false,
+      message: "[RALPH PAUSED - RATE LIMITED] API rate limit detected. Ralph loop paused until the rate limit resets. Resume manually once the limit clears.",
+      mode: "none"
+    };
+  }
+  if (isAuthenticationError(stopContext)) {
+    return {
+      shouldBlock: false,
+      message: "[PERSISTENT MODE PAUSED - AUTHENTICATION ERROR] Authentication failure detected (for example 401/403 or expired OAuth token). Re-authenticate, then resume manually.",
+      mode: "none"
+    };
+  }
+  const todoResult = await checkIncompleteTodos(sessionId, workingDir, stopContext);
+  const hasIncompleteTodos = todoResult.count > 0;
+  const ralphResult = await checkRalphLoop(sessionId, workingDir, cancelInProgress);
+  if (ralphResult) {
+    return ralphResult;
+  }
+  if (isAutopilotActive(workingDir, sessionId)) {
+    const autopilotResult = await checkAutopilot(sessionId, workingDir);
+    if (autopilotResult?.shouldBlock) {
+      return {
+        shouldBlock: true,
+        message: autopilotResult.message,
+        mode: "autopilot",
+        metadata: {
+          iteration: autopilotResult.metadata?.iteration,
+          maxIterations: autopilotResult.metadata?.maxIterations,
+          phase: autopilotResult.phase,
+          tasksCompleted: autopilotResult.metadata?.tasksCompleted,
+          tasksTotal: autopilotResult.metadata?.tasksTotal,
+          toolError: autopilotResult.metadata?.toolError
+        }
+      };
+    }
+  }
+  const ralplanResult = await checkRalplan(sessionId, workingDir, cancelInProgress);
+  if (ralplanResult) {
+    return ralplanResult;
+  }
+  const teamResult = await checkTeamPipeline(sessionId, workingDir, cancelInProgress);
+  if (teamResult) {
+    return teamResult;
+  }
+  const ultraworkResult = await checkUltrawork(sessionId, workingDir, hasIncompleteTodos, cancelInProgress);
+  if (ultraworkResult) {
+    return ultraworkResult;
+  }
+  try {
+    const { checkSkillActiveState: checkSkillActiveState2 } = await Promise.resolve().then(() => (init_skill_state(), skill_state_exports));
+    const skillResult = checkSkillActiveState2(workingDir, sessionId);
+    if (skillResult.shouldBlock) {
+      return {
+        shouldBlock: true,
+        message: skillResult.message,
+        mode: "ultrawork",
+        // Reuse ultrawork mode type for compatibility
+        metadata: {
+          phase: `skill:${skillResult.skillName || "unknown"}`
+        }
+      };
+    }
+  } catch {
+  }
+  return {
+    shouldBlock: false,
+    message: "",
+    mode: "none"
+  };
+}
+function createHookOutput(result) {
+  return {
+    continue: !result.shouldBlock,
+    message: result.message || void 0
+  };
+}
+var import_fs53, import_path63, CANCEL_SIGNAL_TTL_MS2, STALE_STATE_THRESHOLD_MS, todoContinuationAttempts, TRANSCRIPT_TAIL_BYTES, CRITICAL_CONTEXT_STOP_PERCENT, RALPLAN_TERMINAL_PHASES, REVIEWER_TASK_TOOL_NAMES, REVIEWER_COMMAND_TOOL_NAMES, AWAITING_CONFIRMATION_TTL_MS, TEAM_PIPELINE_STOP_BLOCKER_MAX, TEAM_PIPELINE_STOP_BLOCKER_TTL_MS, RALPLAN_STOP_BLOCKER_MAX, RALPLAN_STOP_BLOCKER_TTL_MS, RALPLAN_ACTIVE_AGENT_RECENCY_WINDOW_MS;
+var init_persistent_mode = __esm({
+  "src/hooks/persistent-mode/index.ts"() {
+    "use strict";
+    import_fs53 = require("fs");
+    init_atomic_write();
+    import_path63 = require("path");
+    init_security_config();
+    init_config_dir();
+    init_paths();
+    init_ultrawork();
+    init_worktree_paths();
+    init_mode_state_io();
+    init_ralph();
+    init_todo_continuation();
+    init_hooks();
+    init_autopilot();
+    init_enforcement();
+    init_state();
+    init_subagent_tracker();
+    init_truncate_prompt();
+    CANCEL_SIGNAL_TTL_MS2 = 3e4;
+    STALE_STATE_THRESHOLD_MS = 2 * 60 * 60 * 1e3;
+    todoContinuationAttempts = /* @__PURE__ */ new Map();
+    TRANSCRIPT_TAIL_BYTES = 32 * 1024;
+    CRITICAL_CONTEXT_STOP_PERCENT = 95;
+    RALPLAN_TERMINAL_PHASES = /* @__PURE__ */ new Set([
+      "completed",
+      "complete",
+      "failed",
+      "cancelled",
+      "canceled",
+      "aborted",
+      "terminated",
+      "done",
+      "handoff"
+    ]);
+    REVIEWER_TASK_TOOL_NAMES = /* @__PURE__ */ new Set(["Task", "proxy_Task", "Agent"]);
+    REVIEWER_COMMAND_TOOL_NAMES = /* @__PURE__ */ new Set(["Bash", "proxy_Bash"]);
+    AWAITING_CONFIRMATION_TTL_MS = 2 * 60 * 1e3;
+    TEAM_PIPELINE_STOP_BLOCKER_MAX = 20;
+    TEAM_PIPELINE_STOP_BLOCKER_TTL_MS = 5 * 60 * 1e3;
+    RALPLAN_STOP_BLOCKER_MAX = 30;
+    RALPLAN_STOP_BLOCKER_TTL_MS = 45 * 60 * 1e3;
+    RALPLAN_ACTIVE_AGENT_RECENCY_WINDOW_MS = 5e3;
+  }
+});
+
 // src/hooks/autopilot/pipeline-types.ts
 var STAGE_ORDER, DEFAULT_PIPELINE_CONFIG, DEPRECATED_MODE_ALIASES;
 var init_pipeline_types = __esm({
@@ -17611,16 +18691,16 @@ var init_pipeline = __esm({
 function detectSignal(sessionId, signal) {
   const claudeDir = getClaudeConfigDir();
   const possiblePaths = [
-    (0, import_path63.join)(claudeDir, "sessions", sessionId, "transcript.md"),
-    (0, import_path63.join)(claudeDir, "sessions", sessionId, "messages.json"),
-    (0, import_path63.join)(claudeDir, "transcripts", `${sessionId}.md`)
+    (0, import_path64.join)(claudeDir, "sessions", sessionId, "transcript.md"),
+    (0, import_path64.join)(claudeDir, "sessions", sessionId, "messages.json"),
+    (0, import_path64.join)(claudeDir, "transcripts", `${sessionId}.md`)
   ];
   const pattern = SIGNAL_PATTERNS[signal];
   if (!pattern) return false;
   for (const transcriptPath of possiblePaths) {
-    if ((0, import_fs53.existsSync)(transcriptPath)) {
+    if ((0, import_fs54.existsSync)(transcriptPath)) {
       try {
-        const content = (0, import_fs53.readFileSync)(transcriptPath, "utf-8");
+        const content = (0, import_fs54.readFileSync)(transcriptPath, "utf-8");
         if (pattern.test(content)) {
           return true;
         }
@@ -17655,7 +18735,7 @@ function detectAnySignal(sessionId) {
   }
   return null;
 }
-function isAwaitingConfirmation(state) {
+function isAwaitingConfirmation2(state) {
   if (!state || typeof state !== "object") {
     return false;
   }
@@ -17671,7 +18751,7 @@ function isAwaitingConfirmation(state) {
   if (!Number.isFinite(setAtMs)) {
     return false;
   }
-  return Date.now() - setAtMs < AWAITING_CONFIRMATION_TTL_MS;
+  return Date.now() - setAtMs < AWAITING_CONFIRMATION_TTL_MS2;
 }
 function getNextPhase(current) {
   switch (current) {
@@ -17698,7 +18778,7 @@ async function checkAutopilot(sessionId, directory) {
   if (state.session_id !== sessionId) {
     return null;
   }
-  if (isAwaitingConfirmation(state)) {
+  if (isAwaitingConfirmation2(state)) {
     return null;
   }
   const hardMax = getHardMaxIterations();
@@ -17940,16 +19020,16 @@ IMPORTANT: When this stage is complete, output the signal: ${currentAdapter.comp
 function detectPipelineSignal(sessionId, signal) {
   const claudeDir = getClaudeConfigDir();
   const possiblePaths = [
-    (0, import_path63.join)(claudeDir, "sessions", sessionId, "transcript.md"),
-    (0, import_path63.join)(claudeDir, "sessions", sessionId, "messages.json"),
-    (0, import_path63.join)(claudeDir, "transcripts", `${sessionId}.md`)
+    (0, import_path64.join)(claudeDir, "sessions", sessionId, "transcript.md"),
+    (0, import_path64.join)(claudeDir, "sessions", sessionId, "messages.json"),
+    (0, import_path64.join)(claudeDir, "transcripts", `${sessionId}.md`)
   ];
   const escaped = signal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(escaped, "i");
   for (const transcriptPath of possiblePaths) {
-    if ((0, import_fs53.existsSync)(transcriptPath)) {
+    if ((0, import_fs54.existsSync)(transcriptPath)) {
       try {
-        const content = (0, import_fs53.readFileSync)(transcriptPath, "utf-8");
+        const content = (0, import_fs54.readFileSync)(transcriptPath, "utf-8");
         if (pattern.test(content)) {
           return true;
         }
@@ -17960,12 +19040,12 @@ function detectPipelineSignal(sessionId, signal) {
   }
   return false;
 }
-var import_fs53, import_path63, SIGNAL_PATTERNS, AWAITING_CONFIRMATION_TTL_MS;
+var import_fs54, import_path64, SIGNAL_PATTERNS, AWAITING_CONFIRMATION_TTL_MS2;
 var init_enforcement = __esm({
   "src/hooks/autopilot/enforcement.ts"() {
     "use strict";
-    import_fs53 = require("fs");
-    import_path63 = require("path");
+    import_fs54 = require("fs");
+    import_path64 = require("path");
     init_config_dir();
     init_security_config();
     init_plan_output();
@@ -17984,7 +19064,7 @@ var init_enforcement = __esm({
       TRANSITION_TO_QA: /TRANSITION_TO_QA/i,
       TRANSITION_TO_VALIDATION: /TRANSITION_TO_VALIDATION/i
     };
-    AWAITING_CONFIRMATION_TTL_MS = 2 * 60 * 1e3;
+    AWAITING_CONFIRMATION_TTL_MS2 = 2 * 60 * 1e3;
   }
 });
 
@@ -18086,1086 +19166,6 @@ var init_autopilot = __esm({
     init_pipeline_types();
     init_pipeline();
     init_adapters();
-  }
-});
-
-// src/hooks/persistent-mode/index.ts
-var persistent_mode_exports = {};
-__export(persistent_mode_exports, {
-  checkPersistentModes: () => checkPersistentModes,
-  clearToolErrorState: () => clearToolErrorState,
-  createHookOutput: () => createHookOutput,
-  getIdleNotificationCooldownSeconds: () => getIdleNotificationCooldownSeconds,
-  getToolErrorRetryGuidance: () => getToolErrorRetryGuidance,
-  readLastToolError: () => readLastToolError,
-  recordIdleNotificationSent: () => recordIdleNotificationSent,
-  resetTodoContinuationAttempts: () => resetTodoContinuationAttempts,
-  shouldSendIdleNotification: () => shouldSendIdleNotification,
-  shouldWakeOpenClawOnStop: () => shouldWakeOpenClawOnStop,
-  shouldWriteStateBack: () => shouldWriteStateBack
-});
-function shouldWriteStateBack(statePath) {
-  return Boolean(statePath && (0, import_fs54.existsSync)(statePath));
-}
-function isSessionCancelInProgress(directory, sessionId) {
-  let cancelSignalPath;
-  if (sessionId) {
-    try {
-      cancelSignalPath = resolveSessionStatePath("cancel-signal", sessionId, directory);
-    } catch {
-    }
-  }
-  if (!cancelSignalPath) {
-    cancelSignalPath = (0, import_path64.join)(getOmcRoot(directory), "state", "cancel-signal-state.json");
-  }
-  if (!(0, import_fs54.existsSync)(cancelSignalPath)) {
-    return false;
-  }
-  try {
-    const raw = JSON.parse((0, import_fs54.readFileSync)(cancelSignalPath, "utf-8"));
-    const now = Date.now();
-    const expiresAt = raw.expires_at ? new Date(raw.expires_at).getTime() : NaN;
-    const requestedAt = raw.requested_at ? new Date(raw.requested_at).getTime() : NaN;
-    const fallbackExpiry = Number.isFinite(requestedAt) ? requestedAt + CANCEL_SIGNAL_TTL_MS2 : NaN;
-    const effectiveExpiry = Number.isFinite(expiresAt) ? expiresAt : fallbackExpiry;
-    if (!Number.isFinite(effectiveExpiry) || effectiveExpiry <= now) {
-      (0, import_fs54.unlinkSync)(cancelSignalPath);
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-function isStaleState(state) {
-  if (!state || typeof state !== "object") {
-    return true;
-  }
-  const stateRecord = state;
-  const timestamps = [stateRecord.last_checked_at, stateRecord.updated_at, stateRecord.started_at].filter((value) => typeof value === "string" && value.length > 0);
-  const mostRecent = timestamps.reduce((max, value) => {
-    const parsed = new Date(value).getTime();
-    return Number.isFinite(parsed) && parsed > max ? parsed : max;
-  }, 0);
-  if (mostRecent === 0) {
-    return true;
-  }
-  return Date.now() - mostRecent > STALE_STATE_THRESHOLD_MS;
-}
-function readLastToolError(directory) {
-  const stateDir = (0, import_path64.join)(getOmcRoot(directory), "state");
-  const errorPath = (0, import_path64.join)(stateDir, "last-tool-error.json");
-  try {
-    if (!(0, import_fs54.existsSync)(errorPath)) {
-      return null;
-    }
-    const content = (0, import_fs54.readFileSync)(errorPath, "utf-8");
-    const toolError = JSON.parse(content);
-    if (!toolError || !toolError.timestamp) {
-      return null;
-    }
-    const parsedTime = new Date(toolError.timestamp).getTime();
-    if (!Number.isFinite(parsedTime)) {
-      return null;
-    }
-    const age = Date.now() - parsedTime;
-    if (age > 6e4) {
-      return null;
-    }
-    return toolError;
-  } catch {
-    return null;
-  }
-}
-function clearToolErrorState(directory) {
-  const stateDir = (0, import_path64.join)(getOmcRoot(directory), "state");
-  const errorPath = (0, import_path64.join)(stateDir, "last-tool-error.json");
-  try {
-    if ((0, import_fs54.existsSync)(errorPath)) {
-      (0, import_fs54.unlinkSync)(errorPath);
-    }
-  } catch {
-  }
-}
-function getToolErrorRetryGuidance(toolError) {
-  if (!toolError) {
-    return "";
-  }
-  const retryCount = toolError.retry_count || 1;
-  const toolName = toolError.tool_name || "unknown";
-  const error2 = toolError.error || "Unknown error";
-  if (retryCount >= 5) {
-    return `[TOOL ERROR - ALTERNATIVE APPROACH NEEDED]
-The "${toolName}" operation has failed ${retryCount} times.
-
-STOP RETRYING THE SAME APPROACH. Instead:
-1. Try a completely different command or approach
-2. Check if the environment/dependencies are correct
-3. Consider breaking down the task differently
-4. If stuck, ask the user for guidance
-
-`;
-  }
-  return `[TOOL ERROR - RETRY REQUIRED]
-The previous "${toolName}" operation failed.
-
-Error: ${error2}
-
-REQUIRED ACTIONS:
-1. Analyze why the command failed
-2. Fix the issue (wrong path? permission? syntax? missing dependency?)
-3. RETRY the operation with corrected parameters
-4. Continue with your original task after success
-
-Do NOT skip this step. Do NOT move on without fixing the error.
-
-`;
-}
-function resetTodoContinuationAttempts(sessionId) {
-  todoContinuationAttempts.delete(sessionId);
-}
-function getIdleNotificationCooldownSeconds() {
-  for (const configPath of getGlobalOmcConfigCandidates("config.json")) {
-    try {
-      if (!(0, import_fs54.existsSync)(configPath)) continue;
-      const config2 = JSON.parse((0, import_fs54.readFileSync)(configPath, "utf-8"));
-      const cooldown = config2?.notificationCooldown;
-      const val = cooldown?.sessionIdleSeconds;
-      if (typeof val === "number" && Number.isFinite(val)) return Math.max(0, val);
-      return 60;
-    } catch {
-      return 60;
-    }
-  }
-  return 60;
-}
-function getGlobalIdleNotificationCooldownPath(stateDir) {
-  return (0, import_path64.join)(stateDir, "idle-notif-cooldown.json");
-}
-function getIdleNotificationCooldownPath(stateDir, sessionId) {
-  if (sessionId && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/.test(sessionId)) {
-    return (0, import_path64.join)(stateDir, "sessions", sessionId, "idle-notif-cooldown.json");
-  }
-  return getGlobalIdleNotificationCooldownPath(stateDir);
-}
-function readIdleNotificationCooldownRecord(cooldownPath) {
-  try {
-    if (!(0, import_fs54.existsSync)(cooldownPath)) return null;
-    return JSON.parse((0, import_fs54.readFileSync)(cooldownPath, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-function isRepeatedZeroBacklogCooldown(record2, repoState) {
-  return Boolean(
-    repoState?.backlogZero && record2?.backlogZero === true && typeof record2.repoSignature === "string" && record2.repoSignature === repoState.signature
-  );
-}
-function hasRepeatedZeroBacklogCooldown(stateDir, sessionId, repoState) {
-  const cooldownPath = getIdleNotificationCooldownPath(stateDir, sessionId);
-  const cooldownRecord = readIdleNotificationCooldownRecord(cooldownPath);
-  if (isRepeatedZeroBacklogCooldown(cooldownRecord, repoState)) {
-    return true;
-  }
-  if (cooldownPath !== getGlobalIdleNotificationCooldownPath(stateDir)) {
-    const globalRecord = readIdleNotificationCooldownRecord(getGlobalIdleNotificationCooldownPath(stateDir));
-    if (isRepeatedZeroBacklogCooldown(globalRecord, repoState)) {
-      return true;
-    }
-  }
-  return false;
-}
-function shouldWakeOpenClawOnStop(stateDir, sessionId, repoState) {
-  return !hasRepeatedZeroBacklogCooldown(stateDir, sessionId, repoState);
-}
-function shouldSendIdleNotification(stateDir, sessionId, repoState) {
-  const cooldownSecs = getIdleNotificationCooldownSeconds();
-  const cooldownPath = getIdleNotificationCooldownPath(stateDir, sessionId);
-  const cooldownRecord = readIdleNotificationCooldownRecord(cooldownPath);
-  if (hasRepeatedZeroBacklogCooldown(stateDir, sessionId, repoState)) {
-    return false;
-  }
-  if (repoState && typeof cooldownRecord?.repoSignature === "string") {
-    if (cooldownRecord.repoSignature !== repoState.signature) {
-      return true;
-    }
-  }
-  if (cooldownSecs === 0) return true;
-  if (typeof cooldownRecord?.lastSentAt === "string") {
-    const elapsed = (Date.now() - new Date(cooldownRecord.lastSentAt).getTime()) / 1e3;
-    if (Number.isFinite(elapsed) && elapsed < cooldownSecs) return false;
-  }
-  return true;
-}
-function recordIdleNotificationSent(stateDir, sessionId, repoState) {
-  const cooldownPath = getIdleNotificationCooldownPath(stateDir, sessionId);
-  try {
-    const record2 = {
-      lastSentAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    if (repoState) {
-      record2.repoSignature = repoState.signature;
-      record2.backlogZero = repoState.backlogZero;
-    }
-    atomicWriteJsonSync(cooldownPath, record2);
-    if (repoState?.backlogZero && cooldownPath !== getGlobalIdleNotificationCooldownPath(stateDir)) {
-      atomicWriteJsonSync(getGlobalIdleNotificationCooldownPath(stateDir), record2);
-    }
-  } catch {
-  }
-}
-function readTranscriptTail(transcriptPath) {
-  const size = (0, import_fs54.statSync)(transcriptPath).size;
-  if (size <= TRANSCRIPT_TAIL_BYTES) {
-    return (0, import_fs54.readFileSync)(transcriptPath, "utf-8");
-  }
-  const fd = (0, import_fs54.openSync)(transcriptPath, "r");
-  try {
-    const offset = size - TRANSCRIPT_TAIL_BYTES;
-    const buf = Buffer.allocUnsafe(TRANSCRIPT_TAIL_BYTES);
-    const bytesRead = (0, import_fs54.readSync)(fd, buf, 0, TRANSCRIPT_TAIL_BYTES, offset);
-    return buf.subarray(0, bytesRead).toString("utf-8");
-  } finally {
-    (0, import_fs54.closeSync)(fd);
-  }
-}
-function readTranscriptTailLines(transcriptPath) {
-  const content = readTranscriptTail(transcriptPath);
-  const lines = content.split("\n");
-  try {
-    if ((0, import_fs54.statSync)(transcriptPath).size > TRANSCRIPT_TAIL_BYTES && lines.length > 0) {
-      lines.shift();
-    }
-  } catch {
-    return lines;
-  }
-  return lines;
-}
-function normalizeReviewerPath(subagentType) {
-  if (typeof subagentType !== "string") {
-    return null;
-  }
-  const normalized = subagentType.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  const baseName = normalized.includes(":") ? normalized.slice(normalized.lastIndexOf(":") + 1) : normalized;
-  if (baseName === "architect" || baseName.startsWith("architect-")) {
-    return "architect";
-  }
-  if (baseName === "critic" || baseName.startsWith("critic-")) {
-    return "critic";
-  }
-  return null;
-}
-function isCodexReviewerCommand(command) {
-  return typeof command === "string" && /\bask\s+codex\s+--agent-prompt\s+critic\b/i.test(command);
-}
-function extractTranscriptText(content) {
-  if (typeof content === "string") {
-    return content;
-  }
-  if (Array.isArray(content)) {
-    return content.map((item) => extractTranscriptText(item)).filter(Boolean).join("\n");
-  }
-  if (!content || typeof content !== "object") {
-    return "";
-  }
-  const record2 = content;
-  const directText = typeof record2.text === "string" ? record2.text : "";
-  const nestedContent = "content" in record2 ? extractTranscriptText(record2.content) : "";
-  return [directText, nestedContent].filter(Boolean).join("\n");
-}
-function matchesVerificationReviewerPath(reviewerPath, verificationState) {
-  const expected = verificationState?.critic_mode ?? "architect";
-  return reviewerPath === expected;
-}
-function checkReviewerAuthoredApprovalInMessages(transcriptPath, verificationState) {
-  const reviewerToolUses = /* @__PURE__ */ new Map();
-  for (const line of readTranscriptTailLines(transcriptPath)) {
-    if (!line.trim()) {
-      continue;
-    }
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    const content = entry.message?.content;
-    if (!Array.isArray(content)) {
-      continue;
-    }
-    for (const block of content) {
-      if (block?.type === "tool_use" && block.id && block.name) {
-        if (REVIEWER_TASK_TOOL_NAMES.has(block.name)) {
-          const reviewerPath = normalizeReviewerPath(block.input?.subagent_type);
-          if (reviewerPath && matchesVerificationReviewerPath(reviewerPath, verificationState)) {
-            reviewerToolUses.set(block.id, reviewerPath);
-          }
-          continue;
-        }
-        if (REVIEWER_COMMAND_TOOL_NAMES.has(block.name)) {
-          const command = block.input?.command;
-          if (isCodexReviewerCommand(command) && matchesVerificationReviewerPath("codex", verificationState)) {
-            reviewerToolUses.set(block.id, "codex");
-          }
-        }
-        continue;
-      }
-      if (block?.type !== "tool_result" || !block.tool_use_id) {
-        continue;
-      }
-      if (!reviewerToolUses.has(block.tool_use_id)) {
-        continue;
-      }
-      const reviewerOutput = extractTranscriptText(block.content);
-      if (reviewerOutput && detectArchitectApproval(reviewerOutput, verificationState)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-function estimateTranscriptContextPercent(transcriptPath) {
-  if (!transcriptPath || !(0, import_fs54.existsSync)(transcriptPath)) {
-    return 0;
-  }
-  try {
-    const content = readTranscriptTail(transcriptPath);
-    const windowMatches = [...content.matchAll(/"context_window"\s{0,5}:\s{0,5}(\d+)/g)];
-    const inputMatches = [...content.matchAll(/"input_tokens"\s{0,5}:\s{0,5}(\d+)/g)];
-    const lastWindow = windowMatches.at(-1)?.[1];
-    const lastInput = inputMatches.at(-1)?.[1];
-    if (!lastWindow || !lastInput) {
-      return 0;
-    }
-    const contextWindow = parseInt(lastWindow, 10);
-    const inputTokens = parseInt(lastInput, 10);
-    if (!Number.isFinite(contextWindow) || contextWindow <= 0 || !Number.isFinite(inputTokens)) {
-      return 0;
-    }
-    return Math.round(inputTokens / contextWindow * 100);
-  } catch {
-    return 0;
-  }
-}
-function isCriticalContextStop(stopContext) {
-  if (isContextLimitStop(stopContext)) {
-    return true;
-  }
-  const transcriptPath = stopContext?.transcript_path ?? stopContext?.transcriptPath;
-  return estimateTranscriptContextPercent(transcriptPath) >= CRITICAL_CONTEXT_STOP_PERCENT;
-}
-function isAwaitingConfirmation2(state) {
-  if (!state || typeof state !== "object") {
-    return false;
-  }
-  const stateRecord = state;
-  if (stateRecord.awaiting_confirmation !== true) {
-    return false;
-  }
-  const setAt = typeof stateRecord.awaiting_confirmation_set_at === "string" && stateRecord.awaiting_confirmation_set_at || typeof stateRecord.started_at === "string" && stateRecord.started_at || null;
-  if (!setAt) {
-    return false;
-  }
-  const setAtMs = new Date(setAt).getTime();
-  if (!Number.isFinite(setAtMs)) {
-    return false;
-  }
-  return Date.now() - setAtMs < AWAITING_CONFIRMATION_TTL_MS2;
-}
-function checkArchitectApprovalInTranscript(sessionId, verificationState) {
-  const claudeDir = getClaudeConfigDir();
-  const possiblePaths = [(0, import_path64.join)(claudeDir, "sessions", sessionId, "messages.json")];
-  for (const transcriptPath of possiblePaths) {
-    if (!(0, import_fs54.existsSync)(transcriptPath)) {
-      continue;
-    }
-    try {
-      if (checkReviewerAuthoredApprovalInMessages(transcriptPath, verificationState)) {
-        return true;
-      }
-    } catch {
-      continue;
-    }
-  }
-  return false;
-}
-function checkArchitectRejectionInTranscript(sessionId) {
-  const claudeDir = getClaudeConfigDir();
-  const possiblePaths = [
-    (0, import_path64.join)(claudeDir, "sessions", sessionId, "transcript.md"),
-    (0, import_path64.join)(claudeDir, "sessions", sessionId, "messages.json"),
-    (0, import_path64.join)(claudeDir, "transcripts", `${sessionId}.md`)
-  ];
-  for (const transcriptPath of possiblePaths) {
-    if ((0, import_fs54.existsSync)(transcriptPath)) {
-      try {
-        const content = readTranscriptTail(transcriptPath);
-        const result = detectArchitectRejection(content);
-        if (result.rejected) {
-          return result;
-        }
-      } catch {
-        continue;
-      }
-    }
-  }
-  return { rejected: false, feedback: "" };
-}
-async function checkRalphLoop(sessionId, directory, cancelInProgress) {
-  const workingDir = resolveToWorktreeRoot(directory);
-  const state = readRalphState(workingDir, sessionId);
-  const ralphStatePath = sessionId ? resolveSessionStatePath("ralph", sessionId, workingDir) : resolveStatePath("ralph", workingDir);
-  if (!state || !state.active || isStaleState(state)) {
-    return null;
-  }
-  if (state.session_id && sessionId && state.session_id !== sessionId) {
-    return null;
-  }
-  if (isAwaitingConfirmation2(state)) {
-    return null;
-  }
-  if (cancelInProgress) {
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "none"
-    };
-  }
-  if (state.linked_ultrawork) {
-    const ultraworkState = readUltraworkState(workingDir, sessionId);
-    if (!ultraworkState?.active) {
-      const now = (/* @__PURE__ */ new Date()).toISOString();
-      const restoredState = {
-        active: true,
-        started_at: state.started_at || now,
-        original_prompt: state.prompt || "Ralph loop task",
-        session_id: sessionId,
-        project_path: workingDir,
-        reinforcement_count: 0,
-        last_checked_at: now,
-        linked_to_ralph: true
-      };
-      writeUltraworkState(restoredState, workingDir, sessionId);
-    }
-  }
-  const teamState = readTeamPipelineState(workingDir, sessionId);
-  if (teamState && teamState.active !== void 0 && !isStaleState(teamState)) {
-    const teamPhase = teamState.phase;
-    if (teamPhase === "complete") {
-      clearRalphState(workingDir, sessionId);
-      clearVerificationState(workingDir, sessionId);
-      deactivateUltrawork(workingDir, sessionId);
-      return {
-        shouldBlock: false,
-        message: `[RALPH LOOP COMPLETE - TEAM] Team pipeline completed successfully. Ralph loop ending after ${state.iteration} iteration(s).`,
-        mode: "none"
-      };
-    }
-    if (teamPhase === "failed") {
-      clearRalphState(workingDir, sessionId);
-      clearVerificationState(workingDir, sessionId);
-      deactivateUltrawork(workingDir, sessionId);
-      return {
-        shouldBlock: false,
-        message: `[RALPH LOOP STOPPED - TEAM FAILED] Team pipeline failed. Ralph loop ending after ${state.iteration} iteration(s).`,
-        mode: "none"
-      };
-    }
-    if (teamPhase === "cancelled") {
-      clearRalphState(workingDir, sessionId);
-      clearVerificationState(workingDir, sessionId);
-      deactivateUltrawork(workingDir, sessionId);
-      return {
-        shouldBlock: false,
-        message: `[RALPH LOOP CANCELLED - TEAM] Team pipeline was cancelled. Ralph loop ending after ${state.iteration} iteration(s).`,
-        mode: "none"
-      };
-    }
-  }
-  let verificationState = readVerificationState(workingDir, sessionId);
-  if (verificationState?.pending) {
-    if (sessionId) {
-      if (checkArchitectApprovalInTranscript(sessionId, verificationState)) {
-        if (verificationState.verification_scope === "story" && verificationState.story_id) {
-          markStoryArchitectVerified(workingDir, verificationState.story_id);
-          clearVerificationState(workingDir, sessionId);
-          const refreshedState = readRalphState(workingDir, sessionId);
-          if (refreshedState) {
-            const refreshedPrd = getPrdCompletionStatus(workingDir);
-            refreshedState.current_story_id = refreshedPrd.nextStory?.id;
-            writeRalphState(workingDir, refreshedState, sessionId);
-          }
-          verificationState = readVerificationState(workingDir, sessionId);
-        } else {
-          clearVerificationState(workingDir, sessionId);
-          clearRalphState(workingDir, sessionId);
-          deactivateUltrawork(workingDir, sessionId);
-          const criticLabel = verificationState.critic_mode === "codex" ? "Codex critic" : verificationState.critic_mode === "critic" ? "Critic" : "Architect";
-          return {
-            shouldBlock: false,
-            message: `[RALPH LOOP VERIFIED COMPLETE] ${criticLabel} verified task completion after ${state.iteration} iteration(s). Excellent work!`,
-            mode: "none"
-          };
-        }
-      }
-      const rejection = checkArchitectRejectionInTranscript(sessionId);
-      if (verificationState && rejection.rejected) {
-        if (verificationState.verification_scope === "story" && verificationState.story_id) {
-          markStoryIncomplete(workingDir, verificationState.story_id, rejection.feedback);
-        }
-        recordArchitectFeedback(workingDir, false, rejection.feedback, sessionId);
-        const updatedVerification = readVerificationState(workingDir, sessionId);
-        verificationState = updatedVerification;
-        if (updatedVerification) {
-          const continuationPrompt2 = getArchitectRejectionContinuationPrompt(updatedVerification);
-          return {
-            shouldBlock: true,
-            message: continuationPrompt2,
-            mode: "ralph",
-            metadata: {
-              iteration: state.iteration,
-              maxIterations: state.max_iterations
-            }
-          };
-        }
-      }
-    }
-    if (verificationState?.pending) {
-      const storyUnderReview = verificationState.story_id ? getStory(workingDir, verificationState.story_id) ?? void 0 : void 0;
-      const verificationPrompt = getArchitectVerificationPrompt(verificationState, storyUnderReview);
-      return {
-        shouldBlock: true,
-        message: verificationPrompt,
-        mode: "ralph",
-        metadata: {
-          iteration: state.iteration,
-          maxIterations: state.max_iterations
-        }
-      };
-    }
-  }
-  const prdStatus = getPrdCompletionStatus(workingDir);
-  const currentStory = state.current_story_id ? getStory(workingDir, state.current_story_id) : prdStatus.nextStory;
-  if (currentStory?.passes && currentStory.architectVerified !== true) {
-    const startedVerification = startVerification(
-      workingDir,
-      `Story ${currentStory.id} is marked passes: true and requires architect approval before Ralph can progress.`,
-      state.prompt,
-      state.critic_mode,
-      sessionId,
-      currentStory
-    );
-    return {
-      shouldBlock: true,
-      message: getArchitectVerificationPrompt(startedVerification, currentStory),
-      mode: "ralph",
-      metadata: {
-        iteration: state.iteration,
-        maxIterations: state.max_iterations
-      }
-    };
-  }
-  if (prdStatus.hasPrd && prdStatus.allComplete) {
-    const startedVerification = startVerification(
-      workingDir,
-      `All ${prdStatus.status?.total || 0} PRD stories are marked passes: true.`,
-      state.prompt,
-      state.critic_mode,
-      sessionId
-    );
-    return {
-      shouldBlock: true,
-      message: getArchitectVerificationPrompt(startedVerification),
-      mode: "ralph",
-      metadata: {
-        iteration: state.iteration,
-        maxIterations: state.max_iterations
-      }
-    };
-  }
-  const hardMax = getHardMaxIterations();
-  if (hardMax > 0 && state.iteration >= hardMax) {
-    state.active = false;
-    if (!shouldWriteStateBack(ralphStatePath)) {
-      return {
-        shouldBlock: false,
-        message: "",
-        mode: "none"
-      };
-    }
-    writeRalphState(workingDir, state, sessionId);
-    return {
-      shouldBlock: true,
-      message: `[RALPH - HARD LIMIT] Reached hard max iterations (${hardMax}). Mode auto-disabled. Restart with /oh-my-claudecode:ralph if needed.`,
-      mode: "ralph",
-      metadata: { iteration: state.iteration, maxIterations: state.max_iterations }
-    };
-  }
-  if (state.iteration >= state.max_iterations) {
-    state.max_iterations += 10;
-    if (!shouldWriteStateBack(ralphStatePath)) {
-      return {
-        shouldBlock: false,
-        message: "",
-        mode: "none"
-      };
-    }
-    writeRalphState(workingDir, state, sessionId);
-  }
-  const toolError = readLastToolError(workingDir);
-  const errorGuidance = getToolErrorRetryGuidance(toolError);
-  const newState = incrementRalphIteration(workingDir, sessionId);
-  if (!newState) {
-    return null;
-  }
-  const ralphContext = getRalphContext(workingDir);
-  const prdInstruction = prdStatus.hasPrd ? `2. Check prd.json - verify the current story's acceptance criteria are met, then mark it passes: true. Are ALL stories complete?` : `2. Check your todo list - are ALL items marked complete?`;
-  const continuationPrompt = `<ralph-continuation>
-${errorGuidance ? errorGuidance + "\n" : ""}
-[RALPH - ITERATION ${newState.iteration}/${newState.max_iterations}]
-
-The task is NOT complete yet. Continue working.
-${ralphContext}
-CRITICAL INSTRUCTIONS:
-1. Review your progress and the original task
-${prdInstruction}
-3. Continue from where you left off
-4. When FULLY complete (after ${state.critic_mode === "codex" ? "Codex critic" : state.critic_mode === "critic" ? "Critic" : "Architect"} verification), run \`/oh-my-claudecode:cancel\` to cleanly exit and clean up state files. If cancel fails, retry with \`/oh-my-claudecode:cancel --force\`.
-5. Do NOT stop until the task is truly done
-
-${newState.prompt ? `Original task: ${truncatePromptForEcho(newState.prompt)}` : ""}
-
-</ralph-continuation>
-
----
-
-`;
-  return {
-    shouldBlock: true,
-    message: continuationPrompt,
-    mode: "ralph",
-    metadata: {
-      iteration: newState.iteration,
-      maxIterations: newState.max_iterations,
-      toolError: toolError || void 0
-    }
-  };
-}
-function readStopBreaker(directory, name, sessionId, ttlMs) {
-  const stateDir = sessionId ? (0, import_path64.join)(getOmcRoot(directory), "state", "sessions", sessionId) : (0, import_path64.join)(getOmcRoot(directory), "state");
-  const breakerPath = (0, import_path64.join)(stateDir, `${name}-stop-breaker.json`);
-  try {
-    if (!(0, import_fs54.existsSync)(breakerPath)) return 0;
-    const raw = JSON.parse((0, import_fs54.readFileSync)(breakerPath, "utf-8"));
-    if (ttlMs && raw.updated_at) {
-      const updatedAt = new Date(raw.updated_at).getTime();
-      if (Number.isFinite(updatedAt) && Date.now() - updatedAt > ttlMs) {
-        (0, import_fs54.unlinkSync)(breakerPath);
-        return 0;
-      }
-    }
-    return typeof raw.count === "number" ? raw.count : 0;
-  } catch {
-    return 0;
-  }
-}
-function writeStopBreaker(directory, name, count, sessionId) {
-  const stateDir = sessionId ? (0, import_path64.join)(getOmcRoot(directory), "state", "sessions", sessionId) : (0, import_path64.join)(getOmcRoot(directory), "state");
-  try {
-    (0, import_fs54.mkdirSync)(stateDir, { recursive: true });
-    const breakerPath = (0, import_path64.join)(stateDir, `${name}-stop-breaker.json`);
-    const data = { count, updated_at: (/* @__PURE__ */ new Date()).toISOString() };
-    atomicWriteJsonSync(breakerPath, data);
-  } catch {
-  }
-}
-async function checkTeamPipeline(sessionId, directory, cancelInProgress) {
-  const workingDir = resolveToWorktreeRoot(directory);
-  const teamState = readTeamPipelineState(workingDir, sessionId);
-  if (!teamState) {
-    return null;
-  }
-  if (!teamState.active) {
-    writeStopBreaker(workingDir, "team-pipeline", 0, sessionId);
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "team"
-    };
-  }
-  if (cancelInProgress) {
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "team"
-    };
-  }
-  const rawPhase = teamState.phase ?? teamState.current_phase ?? teamState.currentStage ?? teamState.current_stage ?? teamState.stage;
-  if (typeof rawPhase !== "string") {
-    return { shouldBlock: false, message: "", mode: "team" };
-  }
-  const phase = rawPhase.trim().toLowerCase();
-  if (phase === "complete" || phase === "completed" || phase === "failed" || phase === "cancelled" || phase === "canceled" || phase === "cancel") {
-    writeStopBreaker(workingDir, "team-pipeline", 0, sessionId);
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "team"
-    };
-  }
-  const KNOWN_ACTIVE_PHASES = /* @__PURE__ */ new Set(["team-plan", "team-prd", "team-exec", "team-verify", "team-fix"]);
-  if (!KNOWN_ACTIVE_PHASES.has(phase)) {
-    return { shouldBlock: false, message: "", mode: "team" };
-  }
-  const rawStatus = teamState.status;
-  const status = typeof rawStatus === "string" ? rawStatus.trim().toLowerCase() : null;
-  if (status === "cancelled" || status === "canceled" || status === "cancel" || status === "failed" || status === "complete" || status === "completed") {
-    writeStopBreaker(workingDir, "team-pipeline", 0, sessionId);
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "team"
-    };
-  }
-  if (teamState.cancel?.requested) {
-    writeStopBreaker(workingDir, "team-pipeline", 0, sessionId);
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "team"
-    };
-  }
-  const breakerCount = readStopBreaker(workingDir, "team-pipeline", sessionId, TEAM_PIPELINE_STOP_BLOCKER_TTL_MS) + 1;
-  if (breakerCount > TEAM_PIPELINE_STOP_BLOCKER_MAX) {
-    writeStopBreaker(workingDir, "team-pipeline", 0, sessionId);
-    return {
-      shouldBlock: false,
-      message: `[TEAM PIPELINE CIRCUIT BREAKER] Stop enforcement exceeded ${TEAM_PIPELINE_STOP_BLOCKER_MAX} reinforcements. Allowing stop to prevent infinite blocking.`,
-      mode: "team"
-    };
-  }
-  writeStopBreaker(workingDir, "team-pipeline", breakerCount, sessionId);
-  return {
-    shouldBlock: true,
-    message: `<team-pipeline-continuation>
-
-[TEAM PIPELINE - PHASE: ${phase.toUpperCase()} | REINFORCEMENT ${breakerCount}/${TEAM_PIPELINE_STOP_BLOCKER_MAX}]
-
-The team pipeline is active in phase "${phase}". Continue working on the team workflow.
-Do not stop until the pipeline reaches a terminal state (complete/failed/cancelled).
-When done, run \`/oh-my-claudecode:cancel\` to cleanly exit.
-
-</team-pipeline-continuation>
-
----
-
-`,
-    mode: "team",
-    metadata: {
-      phase,
-      tasksCompleted: teamState.execution?.tasks_completed,
-      tasksTotal: teamState.execution?.tasks_total
-    }
-  };
-}
-function getNormalizedRalplanPhase(state) {
-  if (!state || typeof state !== "object") {
-    return null;
-  }
-  const rawPhase = state.current_phase ?? state.phase ?? state.status;
-  if (typeof rawPhase !== "string") {
-    return null;
-  }
-  const phase = rawPhase.trim().toLowerCase();
-  if (!phase) {
-    return null;
-  }
-  if (phase === "handoff" || phase.startsWith("handoff:") || phase.startsWith("handoff-")) {
-    return "handoff";
-  }
-  return phase;
-}
-async function checkRalplan(sessionId, directory, cancelInProgress) {
-  const workingDir = resolveToWorktreeRoot(directory);
-  const state = readModeState("ralplan", workingDir, sessionId);
-  const stateRecord = state;
-  const hasTimestampFields = Boolean(
-    stateRecord && ["last_checked_at", "updated_at", "started_at"].some(
-      (key) => typeof stateRecord[key] === "string" && String(stateRecord[key]).length > 0
-    )
-  );
-  if (!state || !state.active || hasTimestampFields && isStaleState(state)) {
-    return null;
-  }
-  if (sessionId && state.session_id && state.session_id !== sessionId) {
-    return null;
-  }
-  if (isAwaitingConfirmation2(state)) {
-    return null;
-  }
-  const currentPhase = getNormalizedRalplanPhase(state);
-  if (currentPhase && RALPLAN_TERMINAL_PHASES.has(currentPhase)) {
-    writeStopBreaker(workingDir, "ralplan", 0, sessionId);
-    return { shouldBlock: false, message: "", mode: "ralplan" };
-  }
-  if (cancelInProgress) {
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "ralplan"
-    };
-  }
-  const activeAgents = getActiveAgentSnapshot(workingDir);
-  const activeAgentStateUpdatedAt = activeAgents.lastUpdatedAt ? new Date(activeAgents.lastUpdatedAt).getTime() : NaN;
-  const hasFreshActiveAgentState = Number.isFinite(activeAgentStateUpdatedAt) && Date.now() - activeAgentStateUpdatedAt <= RALPLAN_ACTIVE_AGENT_RECENCY_WINDOW_MS;
-  if (activeAgents.count > 0 && hasFreshActiveAgentState) {
-    writeStopBreaker(workingDir, "ralplan", 0, sessionId);
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "ralplan"
-    };
-  }
-  const breakerCount = readStopBreaker(workingDir, "ralplan", sessionId, RALPLAN_STOP_BLOCKER_TTL_MS) + 1;
-  if (breakerCount > RALPLAN_STOP_BLOCKER_MAX) {
-    writeStopBreaker(workingDir, "ralplan", 0, sessionId);
-    state.active = false;
-    state.deactivated_reason = "stop_breaker_exhausted";
-    state.completed_at = (/* @__PURE__ */ new Date()).toISOString();
-    writeModeState("ralplan", state, workingDir, sessionId);
-    return {
-      shouldBlock: false,
-      message: `[RALPLAN CIRCUIT BREAKER] Stop enforcement exceeded ${RALPLAN_STOP_BLOCKER_MAX} reinforcements. Allowing stop and deactivating stale ralplan state to prevent infinite restart loops.`,
-      mode: "ralplan"
-    };
-  }
-  writeStopBreaker(workingDir, "ralplan", breakerCount, sessionId);
-  return {
-    shouldBlock: true,
-    message: `<ralplan-continuation>
-
-[RALPLAN - CONSENSUS PLANNING | REINFORCEMENT ${breakerCount}/${RALPLAN_STOP_BLOCKER_MAX}]
-
-The ralplan consensus workflow is active. Continue the Planner/Architect/Critic loop.
-Do not stop until consensus is reached or the workflow completes.
-When done, run \`/oh-my-claudecode:cancel\` to cleanly exit.
-
-</ralplan-continuation>
-
----
-
-`,
-    mode: "ralplan"
-  };
-}
-async function checkUltrawork(sessionId, directory, _hasIncompleteTodos, cancelInProgress) {
-  const workingDir = resolveToWorktreeRoot(directory);
-  const state = readUltraworkState(workingDir, sessionId);
-  if (!state || !state.active || isStaleState(state)) {
-    return null;
-  }
-  if (state.session_id && sessionId && state.session_id !== sessionId) {
-    return null;
-  }
-  if (isAwaitingConfirmation2(state)) {
-    return null;
-  }
-  if (cancelInProgress) {
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "none"
-    };
-  }
-  if (!_hasIncompleteTodos) {
-    deactivateUltrawork(workingDir, sessionId);
-    return {
-      shouldBlock: false,
-      message: "[ULTRAWORK COMPLETE] No incomplete tasks remain. Ultrawork state cleared.",
-      mode: "none"
-    };
-  }
-  const hardMax = getHardMaxIterations();
-  if (hardMax > 0 && state.reinforcement_count >= hardMax) {
-    deactivateUltrawork(workingDir, sessionId);
-    return {
-      shouldBlock: true,
-      message: "[ULTRAWORK - HARD LIMIT] Reached hard max iterations (" + hardMax + "). Mode auto-disabled. Restart with /oh-my-claudecode:ultrawork if needed.",
-      mode: "ultrawork",
-      metadata: { reinforcementCount: state.reinforcement_count }
-    };
-  }
-  const newState = incrementReinforcement(workingDir, sessionId);
-  if (!newState) {
-    return null;
-  }
-  const message = getUltraworkPersistenceMessage(newState);
-  return {
-    shouldBlock: true,
-    message,
-    mode: "ultrawork",
-    metadata: {
-      reinforcementCount: newState.reinforcement_count
-    }
-  };
-}
-async function checkPersistentModes(sessionId, directory, stopContext) {
-  const workingDir = resolveToWorktreeRoot(directory);
-  if (isCriticalContextStop(stopContext)) {
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "none"
-    };
-  }
-  if (isExplicitCancelCommand(stopContext)) {
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "none"
-    };
-  }
-  const cancelInProgress = isSessionCancelInProgress(workingDir, sessionId);
-  if (cancelInProgress) {
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "none"
-    };
-  }
-  if (isUserAbort(stopContext)) {
-    return {
-      shouldBlock: false,
-      message: "",
-      mode: "none"
-    };
-  }
-  if (isRateLimitStop(stopContext)) {
-    return {
-      shouldBlock: false,
-      message: "[RALPH PAUSED - RATE LIMITED] API rate limit detected. Ralph loop paused until the rate limit resets. Resume manually once the limit clears.",
-      mode: "none"
-    };
-  }
-  if (isAuthenticationError(stopContext)) {
-    return {
-      shouldBlock: false,
-      message: "[PERSISTENT MODE PAUSED - AUTHENTICATION ERROR] Authentication failure detected (for example 401/403 or expired OAuth token). Re-authenticate, then resume manually.",
-      mode: "none"
-    };
-  }
-  const todoResult = await checkIncompleteTodos(sessionId, workingDir, stopContext);
-  const hasIncompleteTodos = todoResult.count > 0;
-  const ralphResult = await checkRalphLoop(sessionId, workingDir, cancelInProgress);
-  if (ralphResult) {
-    return ralphResult;
-  }
-  if (isAutopilotActive(workingDir, sessionId)) {
-    const autopilotResult = await checkAutopilot(sessionId, workingDir);
-    if (autopilotResult?.shouldBlock) {
-      return {
-        shouldBlock: true,
-        message: autopilotResult.message,
-        mode: "autopilot",
-        metadata: {
-          iteration: autopilotResult.metadata?.iteration,
-          maxIterations: autopilotResult.metadata?.maxIterations,
-          phase: autopilotResult.phase,
-          tasksCompleted: autopilotResult.metadata?.tasksCompleted,
-          tasksTotal: autopilotResult.metadata?.tasksTotal,
-          toolError: autopilotResult.metadata?.toolError
-        }
-      };
-    }
-  }
-  const ralplanResult = await checkRalplan(sessionId, workingDir, cancelInProgress);
-  if (ralplanResult) {
-    return ralplanResult;
-  }
-  const teamResult = await checkTeamPipeline(sessionId, workingDir, cancelInProgress);
-  if (teamResult) {
-    return teamResult;
-  }
-  const ultraworkResult = await checkUltrawork(sessionId, workingDir, hasIncompleteTodos, cancelInProgress);
-  if (ultraworkResult) {
-    return ultraworkResult;
-  }
-  try {
-    const { checkSkillActiveState: checkSkillActiveState2 } = await Promise.resolve().then(() => (init_skill_state(), skill_state_exports));
-    const skillResult = checkSkillActiveState2(workingDir, sessionId);
-    if (skillResult.shouldBlock) {
-      return {
-        shouldBlock: true,
-        message: skillResult.message,
-        mode: "ultrawork",
-        // Reuse ultrawork mode type for compatibility
-        metadata: {
-          phase: `skill:${skillResult.skillName || "unknown"}`
-        }
-      };
-    }
-  } catch {
-  }
-  return {
-    shouldBlock: false,
-    message: "",
-    mode: "none"
-  };
-}
-function createHookOutput(result) {
-  return {
-    continue: !result.shouldBlock,
-    message: result.message || void 0
-  };
-}
-var import_fs54, import_path64, CANCEL_SIGNAL_TTL_MS2, STALE_STATE_THRESHOLD_MS, todoContinuationAttempts, TRANSCRIPT_TAIL_BYTES, CRITICAL_CONTEXT_STOP_PERCENT, RALPLAN_TERMINAL_PHASES, REVIEWER_TASK_TOOL_NAMES, REVIEWER_COMMAND_TOOL_NAMES, AWAITING_CONFIRMATION_TTL_MS2, TEAM_PIPELINE_STOP_BLOCKER_MAX, TEAM_PIPELINE_STOP_BLOCKER_TTL_MS, RALPLAN_STOP_BLOCKER_MAX, RALPLAN_STOP_BLOCKER_TTL_MS, RALPLAN_ACTIVE_AGENT_RECENCY_WINDOW_MS;
-var init_persistent_mode = __esm({
-  "src/hooks/persistent-mode/index.ts"() {
-    "use strict";
-    import_fs54 = require("fs");
-    init_atomic_write();
-    import_path64 = require("path");
-    init_security_config();
-    init_config_dir();
-    init_paths();
-    init_ultrawork();
-    init_worktree_paths();
-    init_mode_state_io();
-    init_ralph();
-    init_todo_continuation();
-    init_hooks();
-    init_autopilot();
-    init_enforcement();
-    init_state();
-    init_subagent_tracker();
-    init_truncate_prompt();
-    CANCEL_SIGNAL_TTL_MS2 = 3e4;
-    STALE_STATE_THRESHOLD_MS = 2 * 60 * 60 * 1e3;
-    todoContinuationAttempts = /* @__PURE__ */ new Map();
-    TRANSCRIPT_TAIL_BYTES = 32 * 1024;
-    CRITICAL_CONTEXT_STOP_PERCENT = 95;
-    RALPLAN_TERMINAL_PHASES = /* @__PURE__ */ new Set([
-      "completed",
-      "complete",
-      "failed",
-      "cancelled",
-      "canceled",
-      "aborted",
-      "terminated",
-      "done",
-      "handoff"
-    ]);
-    REVIEWER_TASK_TOOL_NAMES = /* @__PURE__ */ new Set(["Task", "proxy_Task", "Agent"]);
-    REVIEWER_COMMAND_TOOL_NAMES = /* @__PURE__ */ new Set(["Bash", "proxy_Bash"]);
-    AWAITING_CONFIRMATION_TTL_MS2 = 2 * 60 * 1e3;
-    TEAM_PIPELINE_STOP_BLOCKER_MAX = 20;
-    TEAM_PIPELINE_STOP_BLOCKER_TTL_MS = 5 * 60 * 1e3;
-    RALPLAN_STOP_BLOCKER_MAX = 30;
-    RALPLAN_STOP_BLOCKER_TTL_MS = 45 * 60 * 1e3;
-    RALPLAN_ACTIVE_AGENT_RECENCY_WINDOW_MS = 5e3;
   }
 });
 
@@ -77512,6 +77512,82 @@ function deactivateRalplanState(directory, sessionId) {
     sessionId
   );
 }
+function seedRalplanStartupState(directory, sessionId) {
+  const existingState = readModeState("ralplan", directory, sessionId);
+  if (existingState?.active === true) {
+    if (existingState.awaiting_confirmation === true) {
+      markModeAwaitingConfirmation(directory, sessionId, "ralplan");
+    }
+    return;
+  }
+  activateRalplanState(directory, sessionId);
+  markModeAwaitingConfirmation(directory, sessionId, "ralplan");
+}
+async function seedAutopilotStartupState(directory, prompt, sessionId) {
+  const { readAutopilotState: readAutopilotState2, writeAutopilotState: writeAutopilotState2, DEFAULT_CONFIG: DEFAULT_CONFIG6 } = await Promise.resolve().then(() => (init_autopilot(), autopilot_exports));
+  const existingState = readAutopilotState2(directory, sessionId);
+  const existingAutopilotRecord = existingState;
+  if (existingState?.active === true) {
+    if (existingAutopilotRecord?.awaiting_confirmation === true) {
+      markModeAwaitingConfirmation(directory, sessionId, "autopilot");
+    }
+    return;
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const wrote = writeAutopilotState2(
+    directory,
+    {
+      active: true,
+      phase: "expansion",
+      iteration: 1,
+      max_iterations: DEFAULT_CONFIG6.maxIterations ?? 10,
+      originalIdea: prompt,
+      expansion: {
+        analyst_complete: false,
+        architect_complete: false,
+        spec_path: null,
+        requirements_summary: "",
+        tech_stack: []
+      },
+      planning: {
+        plan_path: null,
+        architect_iterations: 0,
+        approved: false
+      },
+      execution: {
+        ralph_iterations: 0,
+        ultrawork_active: false,
+        tasks_completed: 0,
+        tasks_total: 0,
+        files_created: [],
+        files_modified: []
+      },
+      qa: {
+        ultraqa_cycles: 0,
+        build_status: "pending",
+        lint_status: "pending",
+        test_status: "pending"
+      },
+      validation: {
+        architects_spawned: 0,
+        verdicts: [],
+        all_approved: false,
+        validation_rounds: 0
+      },
+      started_at: now,
+      completed_at: null,
+      phase_durations: {},
+      total_agents_spawned: 0,
+      wisdom_entries: 0,
+      session_id: sessionId,
+      project_path: directory
+    },
+    sessionId
+  );
+  if (wrote) {
+    markModeAwaitingConfirmation(directory, sessionId, "autopilot");
+  }
+}
 function readTeamStagedState(directory, sessionId) {
   const stateDir = (0, import_path95.join)(getOmcRoot(directory), "state");
   const statePaths = sessionId ? [
@@ -77889,6 +77965,11 @@ Running directly without heavy agent stacking. Prefix with \`quick:\`, \`simple:
       case "autopilot":
       case "ralplan":
       case "deep-interview":
+        if (keywordType === "autopilot") {
+          await seedAutopilotStartupState(directory, cleanedText, sessionId);
+        } else if (keywordType === "ralplan") {
+          seedRalplanStartupState(directory, sessionId);
+        }
         messages.push(
           `[MODE: ${keywordType.toUpperCase()}] Skill invocation handled by UserPromptSubmit hook.`
         );
@@ -78080,7 +78161,7 @@ async function processSessionStart(input) {
     }
   } catch {
   }
-  const autopilotState = readAutopilotState2(directory);
+  const autopilotState = readAutopilotState2(directory, sessionId);
   if (autopilotState?.active && autopilotState.session_id === sessionId) {
     messages.push(`<session-restore>
 
@@ -78098,7 +78179,7 @@ Treat this as prior-session context only. Prioritize the user's newest request, 
 
 `);
   }
-  const ultraworkState = readUltraworkState2(directory);
+  const ultraworkState = readUltraworkState2(directory, sessionId);
   if (ultraworkState?.active && ultraworkState.session_id === sessionId) {
     messages.push(`<session-restore>
 
@@ -78108,6 +78189,26 @@ You have an active ultrawork session from ${ultraworkState.started_at}.
 Original task: ${ultraworkState.original_prompt}
 
 Treat this as prior-session context only. Prioritize the user's newest request, and resume ultrawork only if the user explicitly asks to continue it.
+
+</session-restore>
+
+---
+
+`);
+  }
+  const ralplanState = readModeState("ralplan", directory, sessionId);
+  if (ralplanState?.active === true && ralplanState.session_id === sessionId) {
+    const ralplanPhase = typeof ralplanState.current_phase === "string" ? ralplanState.current_phase : typeof ralplanState.phase === "string" ? ralplanState.phase : typeof ralplanState.status === "string" ? ralplanState.status : "ralplan";
+    const restoreStatus = ralplanState.awaiting_confirmation === true ? "awaiting skill confirmation" : "active";
+    messages.push(`<session-restore>
+
+[RALPLAN MODE RESTORED]
+
+You have an active ralplan consensus planning session from ${ralplanState.started_at ?? "an earlier turn"}.
+Current phase: ${ralplanPhase}
+Status: ${restoreStatus}
+
+Treat this as prior-session context only. Prioritize the user's newest request, and resume ralplan only if the user explicitly asks to continue it.
 
 </session-restore>
 

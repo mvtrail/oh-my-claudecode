@@ -368,6 +368,99 @@ Read src/hooks/bridge.ts first.`,
       }
     });
 
+    it('seeds inert autopilot state for keyword routing so stop enforcement stays inert until the skill confirms', async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-keyword-autopilot-'));
+      try {
+        execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
+        const sessionId = 'keyword-autopilot-session';
+        const prompt = 'autopilot implement issue #2623 on this branch by tracing the bridge-side keyword producer, seeding deterministic inert startup state for autopilot, preserving session-scoped state isolation, validating that stop enforcement stays dormant until the real skill invocation confirms ownership, and keeping the fix narrow without changing unrelated orchestration behavior anywhere else in this worktree';
+
+        const keywordResult = await processHook('keyword-detector', {
+          sessionId,
+          prompt,
+          directory: tempDir,
+        });
+
+        expect(keywordResult.continue).toBe(true);
+        expect(keywordResult.message).toContain('[MODE: AUTOPILOT]');
+
+        const autopilotPath = join(tempDir, '.omc', 'state', 'sessions', sessionId, 'autopilot-state.json');
+        expect(existsSync(autopilotPath)).toBe(true);
+
+        const autopilotState = JSON.parse(readFileSync(autopilotPath, 'utf-8')) as {
+          active?: boolean;
+          session_id?: string;
+          originalIdea?: string;
+          phase?: string;
+          awaiting_confirmation?: boolean;
+          awaiting_confirmation_set_at?: string;
+        };
+
+        expect(autopilotState.active).toBe(true);
+        expect(autopilotState.session_id).toBe(sessionId);
+        expect(autopilotState.originalIdea).toBe(prompt);
+        expect(autopilotState.phase).toBe('expansion');
+        expect(autopilotState.awaiting_confirmation).toBe(true);
+        expect(typeof autopilotState.awaiting_confirmation_set_at).toBe('string');
+
+        const stopResult = await processHook('persistent-mode', {
+          sessionId,
+          directory: tempDir,
+          stop_reason: 'end_turn',
+        } as HookInput);
+
+        expect(stopResult.continue).toBe(true);
+        expect(stopResult.message).toBeUndefined();
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('seeds inert ralplan state for keyword routing so stop enforcement stays inert until the skill confirms', async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-keyword-ralplan-'));
+      try {
+        execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
+        const sessionId = 'keyword-ralplan-session';
+
+        const keywordResult = await processHook('keyword-detector', {
+          sessionId,
+          prompt: 'ralplan implement issue #2623 by tracing the keyword-routed planning entrypoint, seeding deterministic inert startup state for ralplan, preserving session-scoped restore visibility, verifying that stop enforcement stays dormant until the actual skill invocation confirms ownership, keeping the consensus startup contract fix narrow, avoiding unrelated orchestration behavior drift, documenting restore guidance, and validating parity against the bridge producer flow',
+          directory: tempDir,
+        });
+
+        expect(keywordResult.continue).toBe(true);
+        expect(keywordResult.message).toContain('[MODE: RALPLAN]');
+
+        const ralplanPath = join(tempDir, '.omc', 'state', 'sessions', sessionId, 'ralplan-state.json');
+        expect(existsSync(ralplanPath)).toBe(true);
+
+        const ralplanState = JSON.parse(readFileSync(ralplanPath, 'utf-8')) as {
+          active?: boolean;
+          session_id?: string;
+          current_phase?: string;
+          awaiting_confirmation?: boolean;
+          awaiting_confirmation_set_at?: string;
+        };
+
+        expect(ralplanState.active).toBe(true);
+        expect(ralplanState.session_id).toBe(sessionId);
+        expect(ralplanState.current_phase).toBe('ralplan');
+        expect(ralplanState.awaiting_confirmation).toBe(true);
+        expect(typeof ralplanState.awaiting_confirmation_set_at).toBe('string');
+
+        const stopResult = await processHook('persistent-mode', {
+          sessionId,
+          directory: tempDir,
+          stop_reason: 'end_turn',
+        } as HookInput);
+
+        expect(stopResult.continue).toBe(true);
+        expect(stopResult.message).toBeUndefined();
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
     it('should activate ralph and linked ultrawork when Skill tool invokes ralph', async () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-ralph-'));
       try {
@@ -714,6 +807,38 @@ Read src/hooks/bridge.ts first.`,
         expect(result.message).toContain('canonical-team');
       } finally {
         rmSync(canonicalTeamDir, { recursive: true, force: true });
+      }
+    });
+
+    it('restores ralplan session context on session-start', async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-session-start-ralplan-'));
+      try {
+        execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
+        const sessionId = 'session-start-ralplan';
+        const sessionDir = join(tempDir, '.omc', 'state', 'sessions', sessionId);
+        mkdirSync(sessionDir, { recursive: true });
+        writeFileSync(
+          join(sessionDir, 'ralplan-state.json'),
+          JSON.stringify({
+            active: true,
+            session_id: sessionId,
+            current_phase: 'ralplan',
+            awaiting_confirmation: true,
+            started_at: '2026-04-14T04:00:00.000Z',
+          }, null, 2),
+        );
+
+        const result = await processHook('session-start', {
+          sessionId,
+          directory: tempDir,
+        } as HookInput);
+
+        expect(result.continue).toBe(true);
+        expect(result.message).toContain('[RALPLAN MODE RESTORED]');
+        expect(result.message).toContain('Current phase: ralplan');
+        expect(result.message).toContain('Status: awaiting skill confirmation');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
       }
     });
 
