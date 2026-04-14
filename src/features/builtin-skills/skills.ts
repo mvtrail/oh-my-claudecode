@@ -261,6 +261,13 @@ function loadSkillsFromDirectory(): BuiltinSkill[] {
 
 // Cache loaded skills to avoid repeated file reads
 let cachedSkills: BuiltinSkill[] | null = null;
+let cachedSkillsKey: string | null = null;
+
+function getBuiltinSkillsCacheKey(): string {
+  return JSON.stringify({
+    deepInterviewAmbiguityThreshold: getDeepInterviewAmbiguityThreshold(),
+  });
+}
 
 /**
  * Get all builtin skills
@@ -269,8 +276,10 @@ let cachedSkills: BuiltinSkill[] | null = null;
  * Results are cached after first load.
  */
 export function createBuiltinSkills(): BuiltinSkill[] {
-  if (cachedSkills === null) {
+  const cacheKey = getBuiltinSkillsCacheKey();
+  if (cachedSkills === null || cachedSkillsKey !== cacheKey) {
     cachedSkills = loadSkillsFromDirectory();
+    cachedSkillsKey = cacheKey;
   }
   return cachedSkills;
 }
@@ -304,6 +313,7 @@ export function listBuiltinSkillNames(options?: ListBuiltinSkillNamesOptions): s
  */
 export function clearSkillsCache(): void {
   cachedSkills = null;
+  cachedSkillsKey = null;
 }
 
 /**

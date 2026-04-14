@@ -80541,9 +80541,17 @@ function loadSkillsFromDirectory() {
   return skills;
 }
 var cachedSkills = null;
+var cachedSkillsKey = null;
+function getBuiltinSkillsCacheKey() {
+  return JSON.stringify({
+    deepInterviewAmbiguityThreshold: getDeepInterviewAmbiguityThreshold()
+  });
+}
 function createBuiltinSkills() {
-  if (cachedSkills === null) {
+  const cacheKey = getBuiltinSkillsCacheKey();
+  if (cachedSkills === null || cachedSkillsKey !== cacheKey) {
     cachedSkills = loadSkillsFromDirectory();
+    cachedSkillsKey = cacheKey;
   }
   return cachedSkills;
 }
