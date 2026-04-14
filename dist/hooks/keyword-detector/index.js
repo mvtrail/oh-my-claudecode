@@ -163,6 +163,32 @@ function hasActivationIntentNearKeyword(context, keyword) {
     ];
     return patterns.some((pattern) => pattern.test(context));
 }
+function hasDirectInvocationPrefix(text, position) {
+    const prefix = text.slice(0, position);
+    return /^\s*(?:[$/!]\s*|force:\s*|oh-my-(?:claudecode|codex):\s*)?$/i.test(prefix);
+}
+function hasExplicitInvocationContext(text, position, keywordLength, keywordText) {
+    if (hasDirectInvocationPrefix(text, position)) {
+        return true;
+    }
+    const start = Math.max(0, position - INFORMATIONAL_CONTEXT_WINDOW);
+    const end = Math.min(text.length, position + keywordLength + INFORMATIONAL_CONTEXT_WINDOW);
+    const context = text.slice(start, end);
+    if (hasActivationIntentNearKeyword(context, keywordText)) {
+        return true;
+    }
+    const escaped = escapeRegExp(keywordText.trim());
+    if (!escaped) {
+        return false;
+    }
+    const conversationalInvocationPatterns = [
+        new RegExp(`\\bplease\\s+${escaped}\\b`, 'i'),
+        new RegExp(`\\blet['’]?s\\s+${escaped}\\b`, 'i'),
+        new RegExp(`\\bi\\s+(?:want|need|would\\s+like)\\s+(?:a|an)\\s+${escaped}\\b`, 'i'),
+        new RegExp(`\\b(?:can|could|would|will)\\s+you\\s+${escaped}\\b`, 'i'),
+    ];
+    return conversationalInvocationPatterns.some((pattern) => pattern.test(context));
+}
 function hasDiagnosticIntentNearKeyword(context, keyword) {
     const escaped = escapeRegExp(keyword.trim());
     if (!escaped)
@@ -233,6 +259,27 @@ function findActionableKeywordMatch(text, pattern) {
     }
     return null;
 }
+function findActionableRalplanMatch(text, pattern) {
+    const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+    const globalPattern = new RegExp(pattern.source, flags);
+    for (const match of text.matchAll(globalPattern)) {
+        if (match.index === undefined) {
+            continue;
+        }
+        const keyword = match[0];
+        if (isInformationalKeywordContext(text, match.index, keyword.length, keyword)) {
+            continue;
+        }
+        if (!hasExplicitInvocationContext(text, match.index, keyword.length, keyword)) {
+            continue;
+        }
+        return {
+            keyword,
+            position: match.index,
+        };
+    }
+    return null;
+}
 /**
  * Extract prompt text from message parts
  */
@@ -255,7 +302,9 @@ export function detectKeywordsWithType(text, _agentName) {
             continue;
         }
         const pattern = KEYWORD_PATTERNS[type];
-        const match = findActionableKeywordMatch(cleanedText, pattern);
+        const match = type === 'ralplan'
+            ? findActionableRalplanMatch(cleanedText, pattern)
+            : findActionableKeywordMatch(cleanedText, pattern);
         if (match) {
             detected.push({
                 ...match,
