@@ -34,11 +34,9 @@ jobs:
 
       # ── 2. Install Claude Code non-interactively ─────────────────────────────
       # ANTHROPIC_API_KEY must be set so `claude` authenticates without OAuth.
-      # NOTE: secrets.ANTHROPIC_API_KEY is NOT available to pull_request events
-      # from forks. For fork PRs this step will fail at auth — this is expected
-      # and is not a false negative; the upgrade-test job simply won't pass on
-      # fork PRs without a different secret strategy (e.g., a separate reusable
-      # workflow triggered only on the base repo, or a comment-command dispatch).
+      # NOTE: Step 6 is gated with `if: github.event_name != 'pull_request'`
+      # so it runs only on push/workflow_dispatch where secrets are available.
+      # Steps 3-5 still run on all PRs and validate the omc update path.
 
       - name: Install Claude Code
         run: |
@@ -56,7 +54,16 @@ jobs:
 
       - name: Verify omc version is 4.9.3
         run: |
-          INSTALLED_VERSION=$(omc --version 2>/dev/null | head -1)
+          omc --version > "$RUNNER_TEMP/omc-pre-update.version" 2>&1
+          VERSION_EXIT=$?
+          INSTALLED_VERSION=$(cat "$RUNNER_TEMP/omc-pre-update.version")
+
+          if [ "$VERSION_EXIT" -ne 0 ]; then
+            echo "FAIL: omc --version exited with code $VERSION_EXIT"
+            cat "$RUNNER_TEMP/omc-pre-update.version"
+            exit 1
+          fi
+
           echo "Installed omc version: $INSTALLED_VERSION"
           if [ "$INSTALLED_VERSION" != "4.9.3" ]; then
             echo "Expected version 4.9.3, got: $INSTALLED_VERSION"
@@ -107,8 +114,21 @@ jobs:
 
       - name: Verify omc version is latest after update
         run: |
-          UPDATED_VERSION=$(omc --version 2>/dev/null | head -1)
+          omc --version > "$RUNNER_TEMP/omc-post-update.version" 2>&1
+          VERSION_EXIT=$?
+          UPDATED_VERSION=$(cat "$RUNNER_TEMP/omc-post-update.version")
+
+          if [ "$VERSION_EXIT" -ne 0 ]; then
+            echo "FAIL: omc --version exited with code $VERSION_EXIT"
+            cat "$RUNNER_TEMP/omc-post-update.version"
+            exit 1
+          fi
+
           echo "Updated omc version: $UPDATED_VERSION"
+          if [ -z "$UPDATED_VERSION" ]; then
+            echo "FAIL: omc --version returned empty"
+            exit 1
+          fi
           if [ "$UPDATED_VERSION" = "4.9.3" ]; then
             echo "FAIL: omc version still 4.9.3 after update"
             exit 1
@@ -128,11 +148,11 @@ jobs:
       # some versions, step 6 passes vacuously. Mitigation: CI failure on any
       # stderr still catches hook/runtime misconfigurations.
 
-      # NOTE: secrets.ANTHROPIC_API_KEY is unavailable on fork PRs. Skip this
-      # step on forks to avoid false failures; steps 3-5 still run and validate
-      # the omc update path on all PRs.
+      # Skip on all PRs (fork or not) since secrets.ANTHROPIC_API_KEY is
+      # unavailable on pull_request events. Steps 3-5 still validate the
+      # omc update path on all PRs; step 6 runs on push and workflow_dispatch.
       - name: Trigger session-start hook via Claude Code
-        if: github.event.repository.fork == false
+        if: github.event_name != 'pull_request'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           HOME: ${{ env.HOME }}
