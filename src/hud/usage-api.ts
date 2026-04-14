@@ -857,9 +857,14 @@ export function parseUsageResponse(response: UsageApiResponse): RateLimits | nul
 /**
  * Parse z.ai API response into RateLimits
  *
- * z.ai may return one or two `TOKENS_LIMIT` entries:
- *   - free/basic tier: single TOKENS_LIMIT (5-hour window only)
- *   - pro+ tier: two TOKENS_LIMIT entries (5-hour + weekly windows)
+ * z.ai may return one or two `TOKENS_LIMIT` entries depending on when the
+ * user's plan was purchased:
+ *   - purchased before 2026-02-12 (UTC+8): single TOKENS_LIMIT (5-hour
+ *     window only); HUD must hide the `wk:` segment for these users.
+ *   - purchased on/after 2026-02-12 (UTC+8): two TOKENS_LIMIT entries
+ *     (5-hour + weekly windows).
+ * Tier (`level: "pro"` etc.) does NOT determine whether the weekly bucket
+ * is present — the purchase date does.
  *
  * Classification is primarily by the entry's `unit` field (window type),
  * not `nextResetTime`: the weekly bucket's nextResetTime can be smaller
