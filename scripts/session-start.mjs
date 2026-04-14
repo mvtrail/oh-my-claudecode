@@ -639,7 +639,9 @@ ${cleanContent}
           const latest = versions[0];
           const stalePath = pluginRoot;
           const isWin = process.platform === 'win32';
-          const symlinkTarget = isWin ? join(cacheBase, latest) : latest;
+          // Always use absolute path to avoid symlink target resolution issues
+          // when stalePath is not under cacheBase (e.g., after config-dir move)
+          const symlinkTarget = join(cacheBase, latest);
           try {
             // Atomic: create temp symlink then rename over stale path
             const tmpLink = stalePath + '.tmp.' + process.pid;
