@@ -843,15 +843,41 @@ export function parseUsageResponse(response: UsageApiResponse): RateLimits | nul
 
 /**
  * Parse z.ai API response into RateLimits
+ *
+ * z.ai may return one or two `TOKENS_LIMIT` entries:
+ *   - free/basic tier: single TOKENS_LIMIT (5-hour window only)
+ *   - pro+ tier: two TOKENS_LIMIT entries (5-hour + weekly windows)
+ * Observed on pro tier: `unit: 3` correlates with the 5-hour bucket and
+ * `unit: 6` with the weekly bucket, but these enum codes are undocumented,
+ * so we disambiguate by `nextResetTime` ordering instead (shorter reset
+ * window -> 5-hour slot; longer reset window -> weekly slot).
  */
 export function parseZaiResponse(response: ZaiQuotaResponse): RateLimits | null {
   const limits = response.data?.limits;
   if (!limits || limits.length === 0) return null;
 
-  const tokensLimit = limits.find(l => l.type === 'TOKENS_LIMIT');
+  const allTokensLimits = limits.filter(l => l.type === 'TOKENS_LIMIT');
   const timeLimit = limits.find(l => l.type === 'TIME_LIMIT');
 
-  if (!tokensLimit && !timeLimit) return null;
+  if (allTokensLimits.length === 0 && !timeLimit) return null;
+
+  // Sort TOKENS_LIMIT entries by nextResetTime ascending so the shortest
+  // reset window claims the 5-hour slot. Entries with missing/zero
+  // nextResetTime are disqualified from the 5-hour slot (pushed to end).
+  // Tie-break on equal reset time: smaller percentage wins the 5-hour slot
+  // (empirically the 5-hour window cycles faster so it consumes more slowly).
+  const tokensLimits = allTokensLimits.slice().sort((a, b) => {
+    const aTime = a.nextResetTime && a.nextResetTime > 0 ? a.nextResetTime : Infinity;
+    const bTime = b.nextResetTime && b.nextResetTime > 0 ? b.nextResetTime : Infinity;
+    if (aTime !== bTime) return aTime - bTime;
+    return (a.percentage ?? 0) - (b.percentage ?? 0);
+  });
+
+  if (allTokensLimits.length > 2 && process.env.OMC_DEBUG) {
+    console.error(
+      `[usage-api] z.ai returned ${allTokensLimits.length} TOKENS_LIMIT entries; using first two by reset time`,
+    );
+  }
 
   // Parse nextResetTime (Unix timestamp in milliseconds) to Date
   const parseResetTime = (timestamp: number | undefined): Date | null => {
@@ -864,13 +890,22 @@ export function parseZaiResponse(response: ZaiQuotaResponse): RateLimits | null 
     }
   };
 
-  return {
-    fiveHourPercent: clamp(tokensLimit?.percentage),
-    fiveHourResetsAt: parseResetTime(tokensLimit?.nextResetTime),
-    // z.ai has no weekly quota; leave weeklyPercent undefined so HUD hides it
+  const fiveHourBucket = tokensLimits[0];
+  const weeklyBucket = tokensLimits[1]; // undefined on free/basic tier
+
+  const result: RateLimits = {
+    fiveHourPercent: clamp(fiveHourBucket?.percentage),
+    fiveHourResetsAt: parseResetTime(fiveHourBucket?.nextResetTime),
     monthlyPercent: timeLimit ? clamp(timeLimit.percentage) : undefined,
     monthlyResetsAt: timeLimit ? (parseResetTime(timeLimit.nextResetTime) ?? null) : undefined,
   };
+
+  if (weeklyBucket) {
+    result.weeklyPercent = clamp(weeklyBucket.percentage);
+    result.weeklyResetsAt = parseResetTime(weeklyBucket.nextResetTime);
+  }
+
+  return result;
 }
 
 /**
