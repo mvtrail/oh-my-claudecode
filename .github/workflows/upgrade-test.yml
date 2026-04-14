@@ -89,13 +89,15 @@ jobs:
 
           # Capture exit code of omc update itself (PIPESTATUS[0])
           # npm install may emit deprecation warnings to stderr — those are not
-          # omc errors. Only fail on actual omc errors (error/exception/fail patterns).
+          # omc errors. Filter those out and fail on everything else.
           omc update 1>"$RUNNER_TEMP/omc-update.stdout.log" 2>"$RUNNER_TEMP/omc-update.stderr.log"
           UPDATE_EXIT=$?
 
-          # Check for actual errors (not npm deprecation warnings)
-          if grep -qiE '^(error|exception|fail|critical)' "$RUNNER_TEMP/omc-update.stderr.log" 2>/dev/null; then
-            echo "FAIL: omc update produced errors:"
+          # Check for non-npm stderr (omc warnings/errors/exceptions)
+          # Exclude npm deprecation warnings: "npm deprecated ..." or lines not starting with npm/
+          # All other stderr lines (omc console.warn, error, exception, fail patterns) are failures.
+          if grep -vE '^npm deprecated ' "$RUNNER_TEMP/omc-update.stderr.log" 2>/dev/null | grep -qiE '^(error|exception|fail|critical|warn|omc)'; then
+            echo "FAIL: omc update produced stderr:"
             cat "$RUNNER_TEMP/omc-update.stderr.log"
             echo "Full stdout:"
             cat "$RUNNER_TEMP/omc-update.stdout.log"
@@ -155,7 +157,6 @@ jobs:
         if: github.event_name != 'pull_request'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          HOME: ${{ env.HOME }}
         run: |
           set -o pipefail
 
