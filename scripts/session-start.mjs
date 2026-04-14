@@ -650,6 +650,9 @@ ${cleanContent}
               renameSync(tmpLink, stalePath);
             } catch {
               try { unlinkSync(tmpLink); } catch {}
+              // Remove any pre-existing dangling symlink/junction at stalePath
+              // before recreating, otherwise symlinkSync throws EEXIST
+              try { unlinkSync(stalePath); } catch {}
               symlinkSync(symlinkTarget, stalePath, isWin ? 'junction' : undefined);
             }
           } catch {}
