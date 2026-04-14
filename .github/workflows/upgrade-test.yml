@@ -1,0 +1,155 @@
+name: Upgrade Test
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: upgrade-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upgrade-test:
+    name: omc update + session-start hook
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ── 1. Environment ──────────────────────────────────────────────────────
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # ── 2. Install Claude Code non-interactively ─────────────────────────────
+      # ANTHROPIC_API_KEY must be set so `claude` authenticates without OAuth.
+      # NOTE: secrets.ANTHROPIC_API_KEY is NOT available to pull_request events
+      # from forks. For fork PRs this step will fail at auth — this is expected
+      # and is not a false negative; the upgrade-test job simply won't pass on
+      # fork PRs without a different secret strategy (e.g., a separate reusable
+      # workflow triggered only on the base repo, or a comment-command dispatch).
+
+      - name: Install Claude Code
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+
+      - name: Verify Claude Code is on PATH
+        run: which claude
+
+      # ── 3. Install omc@4.9.3 via npm ────────────────────────────────────────
+      # Establishes the "old version" baseline before `omc update` is run.
+
+      - name: Install omc v4.9.3 via npm
+        run: npm install -g oh-my-claude-sisyphus@4.9.3
+
+      - name: Verify omc version is 4.9.3
+        run: |
+          INSTALLED_VERSION=$(omc --version 2>/dev/null | head -1)
+          echo "Installed omc version: $INSTALLED_VERSION"
+          if [ "$INSTALLED_VERSION" != "4.9.3" ]; then
+            echo "Expected version 4.9.3, got: $INSTALLED_VERSION"
+            exit 1
+          fi
+
+      # ── 4. Run omc update and verify clean stdout only ───────────────────────
+      # omc update must:
+      #   - Exit 0
+      #   - Produce zero stderr
+      # Any npm warnings, git warnings, or sync messages to stderr are failures.
+      # Note: syncMarketplaceClone() is best-effort and skips gracefully when
+      # the marketplace clone (~/.claude/plugins/marketplaces/omc/) doesn't exist,
+      # so CI runners with a fresh home directory are handled correctly.
+
+      - name: Run omc update
+        id: omc-update
+        env:
+          # Suppress npm update progress bar to keep stdout clean
+          npm_config_progress: 'false'
+        run: |
+          set -o pipefail
+
+          # Capture exit code of omc update itself (PIPESTATUS[0])
+          omc update 1>"$RUNNER_TEMP/omc-update.stdout.log" 2>"$RUNNER_TEMP/omc-update.stderr.log"
+          UPDATE_EXIT=$?
+
+          # Fail if any content landed in stderr
+          if [ -s "$RUNNER_TEMP/omc-update.stderr.log" ]; then
+            echo "FAIL: omc update produced stderr:"
+            cat "$RUNNER_TEMP/omc-update.stderr.log"
+            echo "Full stdout:"
+            cat "$RUNNER_TEMP/omc-update.stdout.log"
+            exit 1
+          fi
+
+          if [ "$UPDATE_EXIT" -ne 0 ]; then
+            echo "FAIL: omc update exited with code $UPDATE_EXIT"
+            cat "$RUNNER_TEMP/omc-update.stdout.log"
+            exit 1
+          fi
+
+          echo "PASS: omc update succeeded with no stderr"
+
+      # ── 5. Verify new omc version installed ──────────────────────────────────
+
+      - name: Verify omc version is latest after update
+        run: |
+          UPDATED_VERSION=$(omc --version 2>/dev/null | head -1)
+          echo "Updated omc version: $UPDATED_VERSION"
+          if [ "$UPDATED_VERSION" = "4.9.3" ]; then
+            echo "FAIL: omc version still 4.9.3 after update"
+            exit 1
+          fi
+          echo "PASS: omc updated from 4.9.3 to $UPDATED_VERSION"
+
+      # ── 6. Trigger session-start hook via claude --print ─────────────────────
+      # Run Claude Code in print mode (--print, not -p) with a trivial prompt.
+      # The session-start hook fires at session init.
+      # Any stderr output or non-zero exit is a failure.
+      # Requires ANTHROPIC_API_KEY — will fail on fork PRs (see note in step 2).
+      #
+      # Assumption: `claude --print "echo hello"` fires the SessionStart hook.
+      # This is consistent with Claude Code's session model (--print establishes a
+      # session, hooks fire at session init), but has not been empirically verified
+      # against all Claude Code versions. If --print does not initialize hooks in
+      # some versions, step 6 passes vacuously. Mitigation: CI failure on any
+      # stderr still catches hook/runtime misconfigurations.
+
+      - name: Trigger session-start hook via Claude Code
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          HOME: ${{ env.HOME }}
+        run: |
+          set -o pipefail
+
+          # Run claude --print (long form of -p flag)
+          claude --print "echo hello" 1>"$RUNNER_TEMP/session.stdout.log" 2>"$RUNNER_TEMP/session.stderr.log"
+          SESSION_EXIT=$?
+
+          # Any stderr from Claude Code or the hook is a failure
+          if [ -s "$RUNNER_TEMP/session.stderr.log" ]; then
+            echo "FAIL: Claude Code / session-start hook produced stderr:"
+            cat "$RUNNER_TEMP/session.stderr.log"
+            echo "stdout:"
+            cat "$RUNNER_TEMP/session.stdout.log"
+            exit 1
+          fi
+
+          if [ "$SESSION_EXIT" -ne 0 ]; then
+            echo "FAIL: Claude Code exited with code $SESSION_EXIT"
+            cat "$RUNNER_TEMP/session.stdout.log"
+            exit 1
+          fi
+
+          echo "PASS: Claude Code session completed with no stderr"
