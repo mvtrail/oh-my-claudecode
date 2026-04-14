@@ -681,7 +681,21 @@ Read src/hooks/bridge.ts first.`,
           invocationSessionId,
           'ralplan-state.json',
         );
-        expect(existsSync(invocationStatePath)).toBe(false);
+        expect(existsSync(invocationStatePath)).toBe(true);
+
+        const invocationState = JSON.parse(readFileSync(invocationStatePath, 'utf-8')) as {
+          active?: boolean;
+          session_id?: string;
+          current_phase?: string;
+          awaiting_confirmation?: boolean;
+          awaiting_confirmation_set_at?: string;
+        };
+
+        expect(invocationState.active).toBe(true);
+        expect(invocationState.session_id).toBe(invocationSessionId);
+        expect(invocationState.current_phase).toBe('ralplan');
+        expect(invocationState.awaiting_confirmation).toBe(true);
+        expect(typeof invocationState.awaiting_confirmation_set_at).toBe('string');
 
         const invocationStop = await processHook('persistent-mode', {
           sessionId: invocationSessionId,
