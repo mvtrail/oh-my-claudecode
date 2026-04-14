@@ -2584,6 +2584,11 @@ function commandExists(command, env) {
   });
   return result.status === 0;
 }
+function isClaudeSession(env) {
+  return Boolean(
+    env.CLAUDECODE?.trim() || env.CLAUDE_SESSION_ID?.trim() || env.CLAUDECODE_SESSION_ID?.trim()
+  );
+}
 function resolveOmcCliPrefix(options = {}) {
   const env = options.env ?? process.env;
   const omcAvailable = options.omcAvailable ?? commandExists(OMC_CLI_BINARY, env);
@@ -2596,9 +2601,17 @@ function resolveOmcCliPrefix(options = {}) {
   }
   return OMC_CLI_BINARY;
 }
+function resolveInvocationPrefix(commandSuffix, options = {}) {
+  const env = options.env ?? process.env;
+  const normalizedSuffix = commandSuffix.trim();
+  if (/^ask(?:\s|$)/.test(normalizedSuffix) && isClaudeSession(env)) {
+    return OMC_CLI_BINARY;
+  }
+  return resolveOmcCliPrefix(options);
+}
 function formatOmcCliInvocation(commandSuffix, options = {}) {
   const suffix = commandSuffix.trim().replace(/^omc\s+/, "");
-  return `${resolveOmcCliPrefix(options)} ${suffix}`.trim();
+  return `${resolveInvocationPrefix(suffix, options)} ${suffix}`.trim();
 }
 var OMC_CLI_BINARY, OMC_PLUGIN_BRIDGE_PREFIX;
 var init_omc_cli_rendering = __esm({
@@ -2606,6 +2619,53 @@ var init_omc_cli_rendering = __esm({
     "use strict";
     OMC_CLI_BINARY = "omc";
     OMC_PLUGIN_BRIDGE_PREFIX = 'node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs';
+  }
+});
+
+// src/shared/types.ts
+var CANONICAL_TEAM_ROLES, KNOWN_AGENT_NAMES;
+var init_types = __esm({
+  "src/shared/types.ts"() {
+    "use strict";
+    CANONICAL_TEAM_ROLES = [
+      "orchestrator",
+      "planner",
+      "analyst",
+      "architect",
+      "executor",
+      "debugger",
+      "critic",
+      "code-reviewer",
+      "security-reviewer",
+      "test-engineer",
+      "designer",
+      "writer",
+      "code-simplifier",
+      "explore",
+      "document-specialist"
+    ];
+    KNOWN_AGENT_NAMES = [
+      "omc",
+      "explore",
+      "analyst",
+      "planner",
+      "architect",
+      "debugger",
+      "executor",
+      "verifier",
+      "securityReviewer",
+      "codeReviewer",
+      "testEngineer",
+      "designer",
+      "writer",
+      "qaTester",
+      "scientist",
+      "tracer",
+      "gitMaster",
+      "codeSimplifier",
+      "critic",
+      "documentSpecialist"
+    ];
   }
 });
 
@@ -2725,9 +2785,113 @@ var init_jsonc = __esm({
 });
 
 // src/utils/ssrf-guard.ts
+function validateUrlForSSRF(urlString) {
+  if (!urlString || typeof urlString !== "string") {
+    return { allowed: false, reason: "URL is empty or invalid" };
+  }
+  let parsed;
+  try {
+    parsed = new URL(urlString);
+  } catch {
+    return { allowed: false, reason: "Invalid URL format" };
+  }
+  if (!ALLOWED_SCHEMES.includes(parsed.protocol)) {
+    return { allowed: false, reason: `Protocol '${parsed.protocol}' is not allowed` };
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  for (const pattern of BLOCKED_HOST_PATTERNS) {
+    if (pattern.test(hostname)) {
+      return {
+        allowed: false,
+        reason: `Hostname '${hostname}' resolves to a blocked internal/private address`
+      };
+    }
+  }
+  if (/^0x[0-9a-f]+$/i.test(hostname)) {
+    return {
+      allowed: false,
+      reason: `Hostname '${hostname}' looks like a hex-encoded IP address`
+    };
+  }
+  if (/^\d+$/.test(hostname) && hostname.length > 3) {
+    return {
+      allowed: false,
+      reason: `Hostname '${hostname}' looks like a decimal-encoded IP address`
+    };
+  }
+  if (/^0\d+\./.test(hostname)) {
+    return {
+      allowed: false,
+      reason: `Hostname '${hostname}' looks like an octal-encoded IP address`
+    };
+  }
+  if (parsed.username || parsed.password) {
+    return { allowed: false, reason: "URLs with embedded credentials are not allowed" };
+  }
+  const dangerousPaths = [
+    "/metadata",
+    "/meta-data",
+    "/latest/meta-data",
+    "/computeMetadata"
+  ];
+  const pathLower = parsed.pathname.toLowerCase();
+  for (const dangerous of dangerousPaths) {
+    if (pathLower.startsWith(dangerous)) {
+      return {
+        allowed: false,
+        reason: `Path '${parsed.pathname}' is blocked (cloud metadata access)`
+      };
+    }
+  }
+  return { allowed: true };
+}
+function validateAnthropicBaseUrl(urlString) {
+  const result = validateUrlForSSRF(urlString);
+  if (!result.allowed) {
+    return result;
+  }
+  let parsed;
+  try {
+    parsed = new URL(urlString);
+  } catch {
+    return { allowed: false, reason: "Invalid URL" };
+  }
+  if (parsed.protocol === "http:") {
+    console.warn("[SSRF Guard] Warning: Using HTTP instead of HTTPS for ANTHROPIC_BASE_URL");
+  }
+  return { allowed: true };
+}
+var BLOCKED_HOST_PATTERNS, ALLOWED_SCHEMES;
 var init_ssrf_guard = __esm({
   "src/utils/ssrf-guard.ts"() {
     "use strict";
+    BLOCKED_HOST_PATTERNS = [
+      // Exact matches
+      /^localhost$/i,
+      /^127\.[0-9]+\.[0-9]+\.[0-9]+$/,
+      // Loopback
+      /^10\.[0-9]+\.[0-9]+\.[0-9]+$/,
+      // Class A private
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\.[0-9]+\.[0-9]+$/,
+      // Class B private
+      /^192\.168\.[0-9]+\.[0-9]+$/,
+      // Class C private
+      /^169\.254\.[0-9]+\.[0-9]+$/,
+      // Link-local
+      /^(0|22[4-9]|23[0-9])\.[0-9]+\.[0-9]+\.[0-9]+$/,
+      // Multicast, reserved
+      /^\[?::1\]?$/,
+      // IPv6 loopback
+      /^\[?fc00:/i,
+      // IPv6 unique local
+      /^\[?fe80:/i,
+      // IPv6 link-local
+      /^\[?::ffff:/i,
+      // IPv6-mapped IPv4 (all private ranges accessible via this prefix)
+      /^\[?0{0,4}:{0,2}ffff:/i
+      // IPv6-mapped IPv4 expanded forms
+    ];
+    ALLOWED_SCHEMES = ["https:", "http:"];
   }
 });
 
@@ -2800,6 +2964,33 @@ function isVertexAI() {
   }
   return false;
 }
+function isNonClaudeProvider() {
+  if (process.env.OMC_ROUTING_FORCE_INHERIT === "true") {
+    return true;
+  }
+  if (isBedrock()) {
+    return true;
+  }
+  if (isVertexAI()) {
+    return true;
+  }
+  const modelId = process.env.CLAUDE_MODEL || process.env.ANTHROPIC_MODEL || "";
+  if (modelId && !modelId.toLowerCase().includes("claude")) {
+    return true;
+  }
+  const baseUrl = process.env.ANTHROPIC_BASE_URL || "";
+  if (baseUrl) {
+    const validation = validateAnthropicBaseUrl(baseUrl);
+    if (!validation.allowed) {
+      console.error(`[SSRF Guard] Rejecting ANTHROPIC_BASE_URL: ${validation.reason}`);
+      return true;
+    }
+    if (!baseUrl.includes("anthropic.com")) {
+      return true;
+    }
+  }
+  return false;
+}
 var TIER_ENV_KEYS, CLAUDE_FAMILY_DEFAULTS, BUILTIN_TIER_MODEL_DEFAULTS, CLAUDE_FAMILY_HIGH_VARIANTS, BUILTIN_EXTERNAL_MODEL_DEFAULTS;
 var init_models = __esm({
   "src/config/models.ts"() {
@@ -2840,6 +3031,33 @@ var init_models = __esm({
     BUILTIN_EXTERNAL_MODEL_DEFAULTS = {
       codexModel: "gpt-5.3-codex",
       geminiModel: "gemini-3.1-pro-preview"
+    };
+  }
+});
+
+// src/features/delegation-routing/types.ts
+function normalizeDelegationRole(role) {
+  return DEPRECATED_ROLE_ALIASES[role] ?? role;
+}
+var DEPRECATED_ROLE_ALIASES;
+var init_types2 = __esm({
+  "src/features/delegation-routing/types.ts"() {
+    "use strict";
+    DEPRECATED_ROLE_ALIASES = {
+      researcher: "document-specialist",
+      "tdd-guide": "test-engineer",
+      "api-reviewer": "code-reviewer",
+      "performance-reviewer": "code-reviewer",
+      "dependency-expert": "document-specialist",
+      "quality-strategist": "code-reviewer",
+      vision: "document-specialist",
+      // Consolidated agent aliases (agent consolidation PR)
+      "quality-reviewer": "code-reviewer",
+      "deep-executor": "executor",
+      "build-fixer": "debugger",
+      "harsh-critic": "critic",
+      // User-friendly short alias for /team role routing (plan AC-4)
+      reviewer: "code-reviewer"
     };
   }
 });
@@ -2965,6 +3183,12 @@ function buildDefaultConfig() {
       defaultProvider: "claude",
       roles: {}
     },
+    // /team role routing (Option E — /team-scoped per-role provider & model)
+    // Empty defaults: zero behavior change until user opts in.
+    team: {
+      ops: {},
+      roleRouting: {}
+    },
     planOutput: {
       directory: ".omc/plans",
       filenameTemplate: "{{name}}.md"
@@ -2996,14 +3220,320 @@ function buildDefaultConfig() {
     }
   };
 }
-var DEFAULT_CONFIG;
+function getConfigPaths() {
+  const userConfigDir = getConfigDir();
+  return {
+    user: join11(userConfigDir, "claude-omc", "config.jsonc"),
+    project: join11(process.cwd(), ".claude", "omc.jsonc")
+  };
+}
+function loadJsoncFile(path4) {
+  if (!existsSync7(path4)) {
+    return null;
+  }
+  try {
+    const content = readFileSync3(path4, "utf-8");
+    const result = parseJsonc(content);
+    return result;
+  } catch (error) {
+    console.error(`Error loading config from ${path4}:`, error);
+    return null;
+  }
+}
+function deepMerge(target, source) {
+  const result = { ...target };
+  const mutableResult = result;
+  for (const key of Object.keys(source)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype")
+      continue;
+    const sourceValue = source[key];
+    const targetValue = mutableResult[key];
+    if (sourceValue !== void 0 && typeof sourceValue === "object" && sourceValue !== null && !Array.isArray(sourceValue) && typeof targetValue === "object" && targetValue !== null && !Array.isArray(targetValue)) {
+      mutableResult[key] = deepMerge(
+        targetValue,
+        sourceValue
+      );
+    } else if (sourceValue !== void 0) {
+      mutableResult[key] = sourceValue;
+    }
+  }
+  return result;
+}
+function loadEnvConfig() {
+  const config = {};
+  if (process.env.EXA_API_KEY) {
+    config.mcpServers = {
+      ...config.mcpServers,
+      exa: { enabled: true, apiKey: process.env.EXA_API_KEY }
+    };
+  }
+  if (process.env.OMC_PARALLEL_EXECUTION !== void 0) {
+    config.features = {
+      ...config.features,
+      parallelExecution: process.env.OMC_PARALLEL_EXECUTION === "true"
+    };
+  }
+  if (process.env.OMC_LSP_TOOLS !== void 0) {
+    config.features = {
+      ...config.features,
+      lspTools: process.env.OMC_LSP_TOOLS === "true"
+    };
+  }
+  if (process.env.OMC_MAX_BACKGROUND_TASKS) {
+    const maxTasks = parseInt(process.env.OMC_MAX_BACKGROUND_TASKS, 10);
+    if (!isNaN(maxTasks)) {
+      config.permissions = {
+        ...config.permissions,
+        maxBackgroundTasks: maxTasks
+      };
+    }
+  }
+  if (process.env.OMC_ROUTING_ENABLED !== void 0) {
+    config.routing = {
+      ...config.routing,
+      enabled: process.env.OMC_ROUTING_ENABLED === "true"
+    };
+  }
+  if (process.env.OMC_ROUTING_FORCE_INHERIT !== void 0) {
+    config.routing = {
+      ...config.routing,
+      forceInherit: process.env.OMC_ROUTING_FORCE_INHERIT === "true"
+    };
+  }
+  if (process.env.OMC_ROUTING_DEFAULT_TIER) {
+    const tier = process.env.OMC_ROUTING_DEFAULT_TIER.toUpperCase();
+    if (tier === "LOW" || tier === "MEDIUM" || tier === "HIGH") {
+      config.routing = {
+        ...config.routing,
+        defaultTier: tier
+      };
+    }
+  }
+  const aliasKeys = ["HAIKU", "SONNET", "OPUS"];
+  const modelAliases = {};
+  for (const key of aliasKeys) {
+    const envVal = process.env[`OMC_MODEL_ALIAS_${key}`];
+    if (envVal) {
+      const lower = key.toLowerCase();
+      modelAliases[lower] = envVal.toLowerCase();
+    }
+  }
+  if (Object.keys(modelAliases).length > 0) {
+    config.routing = {
+      ...config.routing,
+      modelAliases
+    };
+  }
+  if (process.env.OMC_ESCALATION_ENABLED !== void 0) {
+    config.routing = {
+      ...config.routing,
+      escalationEnabled: process.env.OMC_ESCALATION_ENABLED === "true"
+    };
+  }
+  const externalModelsDefaults = {};
+  if (process.env.OMC_EXTERNAL_MODELS_DEFAULT_PROVIDER) {
+    const provider = process.env.OMC_EXTERNAL_MODELS_DEFAULT_PROVIDER;
+    if (provider === "codex" || provider === "gemini") {
+      externalModelsDefaults.provider = provider;
+    }
+  }
+  if (process.env.OMC_EXTERNAL_MODELS_DEFAULT_CODEX_MODEL) {
+    externalModelsDefaults.codexModel = process.env.OMC_EXTERNAL_MODELS_DEFAULT_CODEX_MODEL;
+  } else if (process.env.OMC_CODEX_DEFAULT_MODEL) {
+    externalModelsDefaults.codexModel = process.env.OMC_CODEX_DEFAULT_MODEL;
+  }
+  if (process.env.OMC_EXTERNAL_MODELS_DEFAULT_GEMINI_MODEL) {
+    externalModelsDefaults.geminiModel = process.env.OMC_EXTERNAL_MODELS_DEFAULT_GEMINI_MODEL;
+  } else if (process.env.OMC_GEMINI_DEFAULT_MODEL) {
+    externalModelsDefaults.geminiModel = process.env.OMC_GEMINI_DEFAULT_MODEL;
+  }
+  const externalModelsFallback = {
+    onModelFailure: "provider_chain"
+  };
+  if (process.env.OMC_EXTERNAL_MODELS_FALLBACK_POLICY) {
+    const policy = process.env.OMC_EXTERNAL_MODELS_FALLBACK_POLICY;
+    if (policy === "provider_chain" || policy === "cross_provider" || policy === "claude_only") {
+      externalModelsFallback.onModelFailure = policy;
+    }
+  }
+  if (Object.keys(externalModelsDefaults).length > 0 || externalModelsFallback.onModelFailure !== "provider_chain") {
+    config.externalModels = {
+      defaults: externalModelsDefaults,
+      fallbackPolicy: externalModelsFallback
+    };
+  }
+  if (process.env.OMC_DELEGATION_ROUTING_ENABLED !== void 0) {
+    config.delegationRouting = {
+      ...config.delegationRouting,
+      enabled: process.env.OMC_DELEGATION_ROUTING_ENABLED === "true"
+    };
+  }
+  if (process.env.OMC_DELEGATION_ROUTING_DEFAULT_PROVIDER) {
+    const provider = process.env.OMC_DELEGATION_ROUTING_DEFAULT_PROVIDER;
+    if (["claude", "codex", "gemini"].includes(provider)) {
+      config.delegationRouting = {
+        ...config.delegationRouting,
+        defaultProvider: provider
+      };
+    }
+  }
+  const teamRoleOverrides = parseTeamRoleOverridesFromEnv();
+  if (teamRoleOverrides) {
+    config.team = {
+      ...config.team,
+      roleRouting: {
+        ...config.team?.roleRouting,
+        ...teamRoleOverrides
+      }
+    };
+  }
+  return config;
+}
+function warnOnDeprecatedDelegationRouting(config) {
+  const deprecatedProviders = /* @__PURE__ */ new Set();
+  const defaultProvider = config.delegationRouting?.defaultProvider;
+  if (defaultProvider === "codex" || defaultProvider === "gemini") {
+    deprecatedProviders.add(defaultProvider);
+  }
+  const roles = config.delegationRouting?.roles ?? {};
+  for (const route of Object.values(roles)) {
+    const provider = route?.provider;
+    if (provider === "codex" || provider === "gemini") {
+      deprecatedProviders.add(provider);
+    }
+  }
+  if (deprecatedProviders.size === 0) {
+    return;
+  }
+  console.warn(
+    "[OMC] delegationRouting to Codex/Gemini is deprecated and falls back to Claude Task. Use /team for Codex/Gemini CLI workers instead."
+  );
+}
+function validateTeamConfig(config) {
+  const team = config.team;
+  if (!team || typeof team !== "object") return;
+  const ops = team.ops;
+  if (ops && typeof ops === "object") {
+    if (ops.defaultAgentType !== void 0) {
+      if (typeof ops.defaultAgentType !== "string" || !TEAM_ROLE_PROVIDERS.has(ops.defaultAgentType)) {
+        throw new Error(
+          `[OMC] team.ops.defaultAgentType: invalid value "${String(ops.defaultAgentType)}". Allowed: ${[...TEAM_ROLE_PROVIDERS].join(", ")}`
+        );
+      }
+    }
+  }
+  const roleRouting = team.roleRouting;
+  if (!roleRouting || typeof roleRouting !== "object") return;
+  for (const [rawRoleKey, rawSpec] of Object.entries(roleRouting)) {
+    const normalized = normalizeDelegationRole(rawRoleKey);
+    if (!CANONICAL_TEAM_ROLE_SET.has(normalized)) {
+      throw new Error(
+        `[OMC] team.roleRouting: unknown role "${rawRoleKey}". Allowed roles: ${[...CANONICAL_TEAM_ROLE_SET].join(", ")}`
+      );
+    }
+    if (!rawSpec || typeof rawSpec !== "object" || Array.isArray(rawSpec)) {
+      throw new Error(
+        `[OMC] team.roleRouting.${rawRoleKey}: must be an object, got ${Array.isArray(rawSpec) ? "array" : typeof rawSpec}`
+      );
+    }
+    const spec = rawSpec;
+    if (normalized === "orchestrator") {
+      for (const key of Object.keys(spec)) {
+        if (key !== "model") {
+          throw new Error(
+            `[OMC] team.roleRouting.orchestrator: key "${key}" is not allowed (orchestrator is pinned to claude; only "model" is configurable)`
+          );
+        }
+      }
+      if (spec.model !== void 0 && !isValidModelValue(spec.model)) {
+        throw new Error(
+          `[OMC] team.roleRouting.orchestrator.model: must be a tier name (HIGH|MEDIUM|LOW) or model ID string, got ${typeof spec.model}`
+        );
+      }
+      continue;
+    }
+    if (spec.provider !== void 0) {
+      if (typeof spec.provider !== "string" || !TEAM_ROLE_PROVIDERS.has(spec.provider)) {
+        throw new Error(
+          `[OMC] team.roleRouting.${rawRoleKey}.provider: invalid value "${String(spec.provider)}". Allowed: ${[...TEAM_ROLE_PROVIDERS].join(", ")}`
+        );
+      }
+    }
+    if (spec.model !== void 0 && !isValidModelValue(spec.model)) {
+      throw new Error(
+        `[OMC] team.roleRouting.${rawRoleKey}.model: must be a tier name (HIGH|MEDIUM|LOW) or a non-empty model ID string`
+      );
+    }
+    if (spec.agent !== void 0) {
+      if (typeof spec.agent !== "string" || !KNOWN_AGENT_NAME_SET.has(spec.agent)) {
+        throw new Error(
+          `[OMC] team.roleRouting.${rawRoleKey}.agent: unknown agent "${String(spec.agent)}". Allowed: ${[...KNOWN_AGENT_NAME_SET].join(", ")}`
+        );
+      }
+    }
+  }
+}
+function isValidModelValue(value) {
+  if (typeof value !== "string") return false;
+  if (value.length === 0) return false;
+  return TEAM_ROLE_TIERS.has(value) || value.length > 0;
+}
+function parseTeamRoleOverridesFromEnv() {
+  const raw = process.env.OMC_TEAM_ROLE_OVERRIDES;
+  if (!raw) return void 0;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      console.warn(
+        "[OMC] OMC_TEAM_ROLE_OVERRIDES: expected a JSON object; ignoring."
+      );
+      return void 0;
+    }
+    return parsed;
+  } catch (err) {
+    console.warn(
+      `[OMC] OMC_TEAM_ROLE_OVERRIDES: invalid JSON, ignoring (${err.message})`
+    );
+    return void 0;
+  }
+}
+function loadConfig() {
+  const paths = getConfigPaths();
+  let config = buildDefaultConfig();
+  const userConfig = loadJsoncFile(paths.user);
+  if (userConfig) {
+    config = deepMerge(config, userConfig);
+  }
+  const projectConfig = loadJsoncFile(paths.project);
+  if (projectConfig) {
+    config = deepMerge(config, projectConfig);
+  }
+  const envConfig = loadEnvConfig();
+  config = deepMerge(config, envConfig);
+  if (config.routing?.forceInherit !== true && process.env.OMC_ROUTING_FORCE_INHERIT === void 0 && isNonClaudeProvider()) {
+    config.routing = {
+      ...config.routing,
+      forceInherit: true
+    };
+  }
+  warnOnDeprecatedDelegationRouting(config);
+  validateTeamConfig(config);
+  return config;
+}
+var DEFAULT_CONFIG, CANONICAL_TEAM_ROLE_SET, KNOWN_AGENT_NAME_SET, TEAM_ROLE_PROVIDERS, TEAM_ROLE_TIERS;
 var init_loader = __esm({
   "src/config/loader.ts"() {
     "use strict";
+    init_types();
     init_paths();
     init_jsonc();
     init_models();
+    init_types2();
     DEFAULT_CONFIG = buildDefaultConfig();
+    CANONICAL_TEAM_ROLE_SET = new Set(CANONICAL_TEAM_ROLES);
+    KNOWN_AGENT_NAME_SET = new Set(KNOWN_AGENT_NAMES);
+    TEAM_ROLE_PROVIDERS = /* @__PURE__ */ new Set(["claude", "codex", "gemini"]);
+    TEAM_ROLE_TIERS = /* @__PURE__ */ new Set(["HIGH", "MEDIUM", "LOW"]);
   }
 });
 
@@ -3606,13 +4136,6 @@ var init_definitions = __esm({
   }
 });
 
-// src/features/delegation-routing/types.ts
-var init_types = __esm({
-  "src/features/delegation-routing/types.ts"() {
-    "use strict";
-  }
-});
-
 // src/features/delegation-enforcer.ts
 function normalizeToCcAlias(model) {
   const family = resolveClaudeFamily(model);
@@ -3623,7 +4146,7 @@ var init_delegation_enforcer = __esm({
   "src/features/delegation-enforcer.ts"() {
     "use strict";
     init_definitions();
-    init_types();
+    init_types2();
     init_loader();
     init_models();
     FAMILY_TO_ALIAS = {
@@ -3981,11 +4504,13 @@ function generateTriggerMessage(teamName, workerName, teamStateRoot3 = ".omc/sta
   if (teamStateRoot3 !== ".omc/state") {
     return `Read ${inboxPath}, work now, report progress.`;
   }
-  return `Read ${inboxPath}, start work now, report concrete progress (not ACK-only), and keep executing your assigned or next feasible work.`;
+  return `Read ${inboxPath}, execute now, report concrete progress.`;
 }
-function generatePromptModeStartupPrompt(teamName, workerName, teamStateRoot3 = ".omc/state") {
+function generatePromptModeStartupPrompt(teamName, workerName, teamStateRoot3 = ".omc/state", cliOutputContract) {
   const inboxPath = buildInstructionPath(teamStateRoot3, "team", teamName, "workers", workerName, "inbox.md");
-  return `Open ${inboxPath}. Follow it and begin the assigned work.`;
+  const base = `Open ${inboxPath}. Follow it and begin the assigned work.`;
+  return cliOutputContract ? `${base}
+${cliOutputContract}` : base;
 }
 function generateMailboxTriggerMessage(teamName, workerName, count = 1, teamStateRoot3 = ".omc/state") {
   const normalizedCount = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
@@ -3993,7 +4518,7 @@ function generateMailboxTriggerMessage(teamName, workerName, count = 1, teamStat
   if (teamStateRoot3 !== ".omc/state") {
     return `${normalizedCount} new msg(s): check ${mailboxPath}, act and report progress.`;
   }
-  return `You have ${normalizedCount} new message(s). Check ${mailboxPath}, act now, reply with concrete progress (not ACK-only), and keep executing your assigned or next feasible work.`;
+  return `${normalizedCount} new msg(s). Read ${mailboxPath}, act now, report concrete progress.`;
 }
 function agentTypeGuidance(agentType) {
   const teamApiCommand = formatOmcCliInvocation("team api");
@@ -4140,10 +4665,12 @@ ${bootstrapInstructions ? `## Role Context
 ${bootstrapInstructions}
 ` : ""}`;
 }
-async function composeInitialInbox(teamName, workerName, content, cwd) {
+async function composeInitialInbox(teamName, workerName, content, cwd, cliOutputContract) {
   const inboxPath = join13(cwd, `.omc/state/team/${teamName}/workers/${workerName}/inbox.md`);
   await mkdir3(dirname7(inboxPath), { recursive: true });
-  await writeFile3(inboxPath, content, "utf-8");
+  const finalContent = cliOutputContract && !content.includes(cliOutputContract) ? `${content}
+${cliOutputContract}` : content;
+  await writeFile3(inboxPath, finalContent, "utf-8");
 }
 async function ensureWorkerStateDir(teamName, workerName, cwd) {
   const workerDir = join13(cwd, `.omc/state/team/${teamName}/workers/${workerName}`);
@@ -4847,6 +5374,427 @@ var init_phase_controller = __esm({
   }
 });
 
+// src/team/stage-router.ts
+function isTier(value) {
+  return TIER_SET.has(value);
+}
+function getRoleRoutingSpec(roleRouting, role) {
+  if (!roleRouting) return void 0;
+  const normalizedRole = normalizeDelegationRole(role);
+  const direct = roleRouting[normalizedRole];
+  if (direct) return direct;
+  for (const [rawRole, spec] of Object.entries(roleRouting)) {
+    if (spec && normalizeDelegationRole(rawRole) === normalizedRole) {
+      return spec;
+    }
+  }
+  return void 0;
+}
+function resolveTierToModelId(tier, cfg) {
+  const fromCfg = cfg.routing?.tierModels?.[tier];
+  if (typeof fromCfg === "string" && fromCfg.length > 0) return fromCfg;
+  return getDefaultTierModels()[tier];
+}
+function resolveClaudeModel(role, raw, cfg) {
+  if (typeof raw === "string" && raw.length > 0) {
+    return isTier(raw) ? resolveTierToModelId(raw, cfg) : raw;
+  }
+  return resolveTierToModelId(ROLE_DEFAULT_TIER[role], cfg);
+}
+function resolveExternalModel(provider, raw, cfg) {
+  if (typeof raw === "string" && raw.length > 0 && !isTier(raw)) {
+    return raw;
+  }
+  const defaults = cfg.externalModels?.defaults;
+  if (provider === "codex") {
+    return defaults?.codexModel ?? BUILTIN_EXTERNAL_MODEL_DEFAULTS.codexModel;
+  }
+  return defaults?.geminiModel ?? BUILTIN_EXTERNAL_MODEL_DEFAULTS.geminiModel;
+}
+function resolveRoleAssignment(role, cfg) {
+  const normalized = normalizeDelegationRole(role);
+  const canonical = isCanonicalRole(normalized) ? normalized : role;
+  const roleRouting = cfg.team?.roleRouting;
+  const spec = getRoleRoutingSpec(roleRouting, canonical);
+  const isOrchestrator = canonical === "orchestrator";
+  const provider = isOrchestrator ? "claude" : spec?.provider ?? "claude";
+  const model = provider === "claude" ? resolveClaudeModel(canonical, spec?.model, cfg) : resolveExternalModel(provider, spec?.model, cfg);
+  const agent = spec?.agent ?? ROLE_TO_AGENT[canonical];
+  return { provider, model, agent };
+}
+function isCanonicalRole(value) {
+  return CANONICAL_TEAM_ROLES.includes(value);
+}
+function buildResolvedRoutingSnapshot(cfg) {
+  const out = {};
+  const roleRouting = cfg.team?.roleRouting;
+  for (const role of CANONICAL_TEAM_ROLES) {
+    const primary = resolveRoleAssignment(role, cfg);
+    const spec = getRoleRoutingSpec(roleRouting, role);
+    const isExternalPrimary = primary.provider !== "claude";
+    const fallbackModelInput = isExternalPrimary && spec?.model && !isTier(spec.model) ? void 0 : spec?.model;
+    const fallback = {
+      provider: "claude",
+      model: resolveClaudeModel(role, fallbackModelInput, cfg),
+      agent: primary.agent
+    };
+    out[role] = { primary, fallback };
+  }
+  return out;
+}
+var ROLE_TO_AGENT, ROLE_DEFAULT_TIER, TIER_SET;
+var init_stage_router = __esm({
+  "src/team/stage-router.ts"() {
+    "use strict";
+    init_types();
+    init_types2();
+    init_models();
+    ROLE_TO_AGENT = {
+      orchestrator: "omc",
+      planner: "planner",
+      analyst: "analyst",
+      architect: "architect",
+      executor: "executor",
+      debugger: "debugger",
+      critic: "critic",
+      "code-reviewer": "codeReviewer",
+      "security-reviewer": "securityReviewer",
+      "test-engineer": "testEngineer",
+      designer: "designer",
+      writer: "writer",
+      "code-simplifier": "codeSimplifier",
+      explore: "explore",
+      "document-specialist": "documentSpecialist"
+    };
+    ROLE_DEFAULT_TIER = {
+      orchestrator: "HIGH",
+      planner: "HIGH",
+      analyst: "HIGH",
+      architect: "HIGH",
+      executor: "MEDIUM",
+      debugger: "MEDIUM",
+      critic: "HIGH",
+      "code-reviewer": "HIGH",
+      "security-reviewer": "MEDIUM",
+      "test-engineer": "MEDIUM",
+      designer: "MEDIUM",
+      writer: "LOW",
+      "code-simplifier": "HIGH",
+      explore: "LOW",
+      "document-specialist": "MEDIUM"
+    };
+    TIER_SET = /* @__PURE__ */ new Set(["HIGH", "MEDIUM", "LOW"]);
+  }
+});
+
+// src/team/role-router.ts
+function inferLaneIntent(text) {
+  if (!text || text.trim().length === 0) return "unknown";
+  for (const { intent, patterns } of INTENT_PATTERNS) {
+    for (const pattern of patterns) {
+      if (pattern.test(text)) {
+        return intent;
+      }
+    }
+  }
+  return "unknown";
+}
+function routeTaskToRole(taskSubject, taskDescription, fallbackRole) {
+  const combined = `${taskSubject} ${taskDescription}`.trim();
+  const intent = inferLaneIntent(combined);
+  const isSecurityDomain = SECURITY_DOMAIN_RE.test(combined);
+  switch (intent) {
+    case "build-fix":
+      return { role: "build-fixer", confidence: "high", reason: "build-fix intent detected" };
+    case "debug":
+      return { role: "debugger", confidence: "high", reason: "debug intent detected" };
+    case "docs":
+      return { role: "writer", confidence: "high", reason: "docs intent detected" };
+    case "design":
+      return { role: "designer", confidence: "high", reason: "design intent detected" };
+    case "cleanup":
+      return { role: "code-simplifier", confidence: "high", reason: "cleanup intent detected" };
+    case "review":
+      if (isSecurityDomain) {
+        return { role: "security-reviewer", confidence: "high", reason: "review intent with security domain detected" };
+      }
+      return { role: "quality-reviewer", confidence: "high", reason: "review intent detected" };
+    case "verification":
+      return { role: "test-engineer", confidence: "high", reason: "verification intent detected" };
+    case "implementation":
+      return {
+        role: fallbackRole,
+        confidence: "medium",
+        reason: isSecurityDomain ? "implementation intent with security domain \u2014 stays on fallback role" : "implementation intent \u2014 using fallback role"
+      };
+    case "unknown":
+    default: {
+      const best = scoreByKeywords(combined);
+      if (best) {
+        return {
+          role: best.role,
+          confidence: "medium",
+          reason: `keyword match (${best.count} hits) for role '${best.role}'`
+        };
+      }
+      return {
+        role: fallbackRole,
+        confidence: "low",
+        reason: "no clear intent signal \u2014 using fallback role"
+      };
+    }
+  }
+}
+function scoreByKeywords(text) {
+  let bestRole = null;
+  let bestCount = 0;
+  for (const [role, patterns] of Object.entries(ROLE_KEYWORDS)) {
+    const count = patterns.filter((p) => p.test(text)).length;
+    if (count > bestCount) {
+      bestCount = count;
+      bestRole = role;
+    }
+  }
+  return bestRole && bestCount > 0 ? { role: bestRole, count: bestCount } : null;
+}
+var INTENT_PATTERNS, SECURITY_DOMAIN_RE, ROLE_KEYWORDS;
+var init_role_router = __esm({
+  "src/team/role-router.ts"() {
+    "use strict";
+    INTENT_PATTERNS = [
+      {
+        intent: "build-fix",
+        patterns: [
+          /\bfix(?:ing)?\s+(?:the\s+)?(?:build|ci|lint|compile|tsc|type.?check)/i,
+          /\bfailing\s+build\b/i,
+          /\bbuild\s+(?:error|fail|broken|fix)/i,
+          /\btsc\s+error/i,
+          /\bcompile\s+error/i,
+          /\bci\s+(?:fail|broken|fix)/i
+        ]
+      },
+      {
+        intent: "debug",
+        patterns: [
+          /\bdebug(?:ging)?\b/i,
+          /\btroubleshoot(?:ing)?\b/i,
+          /\binvestigate\b/i,
+          /\broot.?cause\b/i,
+          /\bwhy\s+(?:is|does|did|are)\b/i,
+          /\bdiagnos(?:e|ing)\b/i,
+          /\btrace\s+(?:the|an?)\s+(?:bug|issue|error|problem)/i
+        ]
+      },
+      {
+        intent: "docs",
+        patterns: [
+          /\bdocument(?:ation|ing|ation)?\b/i,
+          /\bwrite\s+(?:docs|readme|changelog|comments|jsdoc|tsdoc)/i,
+          /\bupdate\s+(?:docs|readme|changelog)/i,
+          /\badd\s+(?:docs|comments|jsdoc|tsdoc)\b/i,
+          /\breadme\b/i,
+          /\bchangelog\b/i
+        ]
+      },
+      {
+        intent: "design",
+        patterns: [
+          /\bdesign\b/i,
+          /\barchitect(?:ure|ing)?\b/i,
+          /\bui\s+(?:design|layout|component)/i,
+          /\bux\b/i,
+          /\bwireframe\b/i,
+          /\bmockup\b/i,
+          /\bprototype\b/i,
+          /\bsystem\s+design\b/i,
+          /\bapi\s+design\b/i
+        ]
+      },
+      {
+        intent: "cleanup",
+        patterns: [
+          /\bclean\s*up\b/i,
+          /\brefactor(?:ing)?\b/i,
+          /\bsimplif(?:y|ying)\b/i,
+          /\bdead\s+code\b/i,
+          /\bunused\s+(?:code|import|variable|function)\b/i,
+          /\bremove\s+(?:dead|unused|legacy)\b/i,
+          /\bdebt\b/i
+        ]
+      },
+      {
+        intent: "review",
+        patterns: [
+          /\breview\b/i,
+          /\baudit\b/i,
+          /\bpr\s+review\b/i,
+          /\bcode\s+review\b/i,
+          /\bcheck\s+(?:the\s+)?(?:code|pr|pull.?request)\b/i
+        ]
+      },
+      {
+        intent: "verification",
+        patterns: [
+          /\btest(?:ing|s)?\b/i,
+          /\bverif(?:y|ication)\b/i,
+          /\bvalidat(?:e|ion)\b/i,
+          /\bunit\s+test\b/i,
+          /\bintegration\s+test\b/i,
+          /\be2e\b/i,
+          /\bspec\b/i,
+          /\bcoverage\b/i,
+          /\bassert(?:ion)?\b/i
+        ]
+      },
+      {
+        intent: "implementation",
+        patterns: [
+          /\bimplement(?:ing|ation)?\b/i,
+          /\badd\s+(?:the\s+)?(?:feature|function|method|class|endpoint|route)\b/i,
+          /\bbuild\s+(?:the\s+)?(?:feature|component|module|service|api)\b/i,
+          /\bcreate\s+(?:the\s+)?(?:feature|component|module|service|api|function)\b/i,
+          /\bwrite\s+(?:the\s+)?(?:code|function|class|method|module)\b/i
+        ]
+      }
+    ];
+    SECURITY_DOMAIN_RE = /\b(?:auth(?:entication|orization)?|cve|injection|owasp|security|vulnerability|vuln|xss|csrf|sqli|rce|privilege.?escalat)\b/i;
+    ROLE_KEYWORDS = {
+      "build-fixer": [/\bbuild\b/i, /\bci\b/i, /\bcompile\b/i, /\btsc\b/i, /\blint\b/i],
+      debugger: [/\bdebug\b/i, /\btroubleshoot\b/i, /\binvestigate\b/i, /\bdiagnos/i],
+      writer: [/\bdoc(?:ument)?/i, /\breadme\b/i, /\bchangelog\b/i, /\bcomment/i],
+      designer: [/\bdesign\b/i, /\barchitect/i, /\bui\b/i, /\bux\b/i, /\bwireframe\b/i],
+      "code-simplifier": [/\brefactor/i, /\bclean/i, /\bsimplif/i, /\bdebt\b/i, /\bunused\b/i],
+      "security-reviewer": [/\bsecurity\b/i, /\bvulnerabilit/i, /\bcve\b/i, /\bowasp\b/i, /\bxss\b/i],
+      "quality-reviewer": [/\breview\b/i, /\baudit\b/i, /\bcheck\b/i],
+      "test-engineer": [/\btest/i, /\bverif/i, /\bvalidat/i, /\bspec\b/i, /\bcoverage\b/i],
+      executor: [/\bimplement/i, /\bbuild\b/i, /\bcreate\b/i, /\badd\b/i, /\bwrite\b/i]
+    };
+  }
+});
+
+// src/team/cli-worker-contract.ts
+function shouldInjectContract(role, provider) {
+  if (!role || !provider) return false;
+  if (provider === "claude") return false;
+  return CONTRACT_ROLES.has(role);
+}
+function renderCliWorkerOutputContract(role, output_file) {
+  return [
+    "",
+    "---",
+    "## REQUIRED: Structured Verdict Output",
+    "",
+    `You are acting in the \`${role}\` role. Before you exit, write a JSON verdict to:`,
+    "",
+    `    ${output_file}`,
+    "",
+    "Schema (all keys required; `findings` may be an empty array):",
+    "",
+    "```json",
+    "{",
+    `  "role": "${role}",`,
+    '  "task_id": "<task id from the assignment above>",',
+    '  "verdict": "approve" | "revise" | "reject",',
+    '  "summary": "one- or two-sentence overall assessment",',
+    '  "findings": [',
+    "    {",
+    '      "severity": "critical" | "major" | "minor" | "nit",',
+    '      "message": "what is wrong and why it matters",',
+    '      "file": "optional/path/to/file",',
+    '      "line": 42',
+    "    }",
+    "  ]",
+    "}",
+    "```",
+    "",
+    "Rules:",
+    "- Write valid JSON only (no surrounding prose, no markdown fences in the file).",
+    "- `verdict` MUST be one of `approve`, `revise`, or `reject`.",
+    "- Each finding MUST carry a `severity` from the enum above.",
+    "- Use `approve` only when you have no blocking concerns.",
+    '- If you cannot produce a verdict, write `{"verdict":"revise", ...}` with an explanatory finding rather than exiting silently.',
+    "- The team leader reads this file to mark the task complete; omitting it leaves the task stuck in_progress pending human review.",
+    ""
+  ].join("\n");
+}
+function parseCliWorkerVerdict(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`verdict_json_parse_failed: ${err.message}`);
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("verdict_not_object");
+  }
+  const obj = parsed;
+  const role = obj.role;
+  if (typeof role !== "string" || !role) {
+    throw new Error("verdict_missing_role");
+  }
+  const taskId = obj.task_id;
+  if (typeof taskId !== "string" || !taskId) {
+    throw new Error("verdict_missing_task_id");
+  }
+  const verdict = obj.verdict;
+  if (typeof verdict !== "string" || !VALID_VERDICTS.has(verdict)) {
+    throw new Error(`verdict_invalid_verdict:${String(verdict)}`);
+  }
+  const summary = obj.summary;
+  if (typeof summary !== "string") {
+    throw new Error("verdict_missing_summary");
+  }
+  const findingsRaw = obj.findings;
+  if (!Array.isArray(findingsRaw)) {
+    throw new Error("verdict_findings_not_array");
+  }
+  const findings = findingsRaw.map((entry, idx) => {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`verdict_finding_${idx}_not_object`);
+    }
+    const f = entry;
+    const severity = f.severity;
+    if (typeof severity !== "string" || !VALID_SEVERITIES.has(severity)) {
+      throw new Error(`verdict_finding_${idx}_invalid_severity:${String(severity)}`);
+    }
+    const message = f.message;
+    if (typeof message !== "string" || !message) {
+      throw new Error(`verdict_finding_${idx}_missing_message`);
+    }
+    const finding = {
+      severity,
+      message
+    };
+    if (typeof f.file === "string" && f.file) finding.file = f.file;
+    if (typeof f.line === "number" && Number.isFinite(f.line)) finding.line = f.line;
+    return finding;
+  });
+  return {
+    role,
+    task_id: taskId,
+    verdict,
+    summary,
+    findings
+  };
+}
+function cliWorkerOutputFilePath(teamStateRootAbs, workerName) {
+  return `${teamStateRootAbs.replaceAll("\\", "/")}/workers/${workerName}/verdict.json`;
+}
+var CONTRACT_ROLES, VALID_VERDICTS, VALID_SEVERITIES;
+var init_cli_worker_contract = __esm({
+  "src/team/cli-worker-contract.ts"() {
+    "use strict";
+    CONTRACT_ROLES = /* @__PURE__ */ new Set([
+      "critic",
+      "code-reviewer",
+      "security-reviewer",
+      "test-engineer"
+    ]);
+    VALID_VERDICTS = /* @__PURE__ */ new Set(["approve", "revise", "reject"]);
+    VALID_SEVERITIES = /* @__PURE__ */ new Set(["critical", "major", "minor", "nit"]);
+  }
+});
+
 // src/team/runtime-v2.ts
 var runtime_v2_exports = {};
 __export(runtime_v2_exports, {
@@ -4854,6 +5802,7 @@ __export(runtime_v2_exports, {
   findActiveTeamsV2: () => findActiveTeamsV2,
   isRuntimeV2Enabled: () => isRuntimeV2Enabled,
   monitorTeamV2: () => monitorTeamV2,
+  processCliWorkerVerdicts: () => processCliWorkerVerdicts,
   requeueDeadWorkerTasks: () => requeueDeadWorkerTasks,
   resumeTeamV2: () => resumeTeamV2,
   shutdownTeamV2: () => shutdownTeamV2,
@@ -4869,6 +5818,34 @@ function isRuntimeV2Enabled(env = process.env) {
   if (!raw) return true;
   const normalized = raw.trim().toLowerCase();
   return !["0", "false", "no", "off"].includes(normalized);
+}
+function resolveTaskAssignment(task, resolvedRouting, roleRoutingConfig, resolvedBinaryPaths, fallbackAgent) {
+  const canonicalRoles = new Set(CANONICAL_TEAM_ROLES);
+  const hasExplicitRole = typeof task.role === "string" && task.role.length > 0;
+  const rawRole = hasExplicitRole ? task.role : routeTaskToRole(task.subject, task.description, "executor").role;
+  const normalized = normalizeDelegationRole(rawRole);
+  const canonical = canonicalRoles.has(normalized) ? normalized : null;
+  if (!canonical) {
+    return { agentType: fallbackAgent, model: "", role: null };
+  }
+  const hasConfigForRole = !!getRoleRoutingSpec(
+    roleRoutingConfig,
+    canonical
+  );
+  if (!hasExplicitRole && !hasConfigForRole) {
+    return { agentType: fallbackAgent, model: "", role: canonical };
+  }
+  const pair = resolvedRouting[canonical];
+  if (!pair) {
+    return { agentType: fallbackAgent, model: "", role: canonical };
+  }
+  const primaryProvider = pair.primary.provider;
+  const chosen = resolvedBinaryPaths[primaryProvider] ? pair.primary : pair.fallback;
+  return {
+    agentType: chosen.provider,
+    model: chosen.model,
+    role: canonical
+  };
 }
 function sanitizeTeamName(name) {
   const sanitized = name.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
@@ -4917,7 +5894,7 @@ function getTaskDependencyIds(task) {
 function getMissingDependencyIds(task, taskById) {
   return getTaskDependencyIds(task).filter((dependencyId) => !taskById.has(dependencyId));
 }
-function buildV2TaskInstruction(teamName, workerName, task, taskId) {
+function buildV2TaskInstruction(teamName, workerName, task, taskId, cliOutputContract) {
   const claimTaskCommand = formatOmcCliInvocation(
     `team api claim-task --input '${JSON.stringify({ team_name: teamName, task_id: taskId, worker: workerName })}' --json`,
     {}
@@ -4949,7 +5926,8 @@ function buildV2TaskInstruction(teamName, workerName, task, taskId) {
     ``,
     task.description,
     ``,
-    `REMINDER: You MUST run transition-task-status before exiting. Do NOT write done.json or edit task files directly.`
+    `REMINDER: You MUST run transition-task-status before exiting. Do NOT write done.json or edit task files directly.`,
+    ...cliOutputContract ? [cliOutputContract] : []
   ].join("\n");
 }
 async function notifyStartupInbox(sessionName2, paneId, message) {
@@ -5018,16 +5996,31 @@ async function spawnV2Worker(opts) {
     return { paneId: null, startupAssigned: false, startupFailureReason: "pane_id_missing" };
   }
   const usePromptMode = isPromptModeAgent(opts.agentType);
+  const injectContract = shouldInjectContract(opts.role ?? null, opts.agentType);
+  const outputFile = injectContract && opts.role ? cliWorkerOutputFilePath(teamStateRoot(opts.cwd, opts.teamName), opts.workerName) : void 0;
+  const cliOutputContract = injectContract && opts.role && outputFile ? renderCliWorkerOutputContract(opts.role, outputFile) : void 0;
   const instruction = buildV2TaskInstruction(
     opts.teamName,
     opts.workerName,
     opts.task,
-    opts.taskId
+    opts.taskId,
+    cliOutputContract
   );
   const inboxTriggerMessage = generateTriggerMessage(opts.teamName, opts.workerName);
-  const promptModeStartupPrompt = generatePromptModeStartupPrompt(opts.teamName, opts.workerName);
+  const promptModeStartupPrompt = generatePromptModeStartupPrompt(
+    opts.teamName,
+    opts.workerName,
+    void 0,
+    cliOutputContract
+  );
   if (usePromptMode) {
-    await composeInitialInbox(opts.teamName, opts.workerName, instruction, opts.cwd);
+    await composeInitialInbox(
+      opts.teamName,
+      opts.workerName,
+      instruction,
+      opts.cwd,
+      cliOutputContract
+    );
   }
   const envVars = {
     ...getWorkerEnv(opts.teamName, opts.workerName, opts.agentType),
@@ -5035,7 +6028,7 @@ async function spawnV2Worker(opts) {
     OMC_TEAM_LEADER_CWD: opts.cwd
   };
   const resolvedBinaryPath = opts.resolvedBinaryPaths[opts.agentType] ?? resolveValidatedBinaryPath(opts.agentType);
-  const modelForAgent = (() => {
+  const modelForAgent = opts.model ?? (() => {
     if (opts.agentType === "codex") {
       return process.env.OMC_EXTERNAL_MODELS_DEFAULT_CODEX_MODEL || process.env.OMC_CODEX_DEFAULT_MODEL || void 0;
     }
@@ -5142,21 +6135,61 @@ async function spawnV2Worker(opts) {
   }
   return {
     paneId,
-    startupAssigned: true
+    startupAssigned: true,
+    ...outputFile ? { outputFile } : {}
   };
 }
 async function startTeamV2(config) {
   const sanitized = sanitizeTeamName(config.teamName);
   const leaderCwd = resolve3(config.cwd);
   validateTeamName(sanitized);
+  const pluginCfg = config.pluginConfig ?? loadConfig();
+  const resolvedRouting = buildResolvedRoutingSnapshot(pluginCfg);
   const agentTypes = config.agentTypes;
   const resolvedBinaryPaths = {};
+  const missingBinaryReasons = [];
   for (const agentType of [...new Set(agentTypes)]) {
-    resolvedBinaryPaths[agentType] = resolveValidatedBinaryPath(agentType);
+    try {
+      resolvedBinaryPaths[agentType] = resolveValidatedBinaryPath(agentType);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      missingBinaryReasons.push({ agentType, reason });
+    }
+  }
+  for (const { primary } of Object.values(resolvedRouting)) {
+    const provider = primary.provider;
+    if (resolvedBinaryPaths[provider]) continue;
+    if (missingBinaryReasons.some((m) => m.agentType === provider)) continue;
+    try {
+      resolvedBinaryPaths[provider] = resolveValidatedBinaryPath(provider);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      missingBinaryReasons.push({ agentType: provider, reason });
+    }
+  }
+  if (!resolvedBinaryPaths.claude) {
+    try {
+      resolvedBinaryPaths.claude = resolveValidatedBinaryPath("claude");
+    } catch {
+    }
   }
   await mkdir7(absPath(leaderCwd, TeamPaths.tasks(sanitized)), { recursive: true });
   await mkdir7(absPath(leaderCwd, TeamPaths.workers(sanitized)), { recursive: true });
   await mkdir7(join18(leaderCwd, ".omc", "state", "team", sanitized, "mailbox"), { recursive: true });
+  const missingBinaryLogFailure = createSwallowedErrorLogger(
+    "team.runtime-v2.startTeamV2 cli_binary_missing event failed"
+  );
+  for (const { agentType, reason } of missingBinaryReasons) {
+    process.stderr.write(
+      `[team/runtime-v2] cli_binary_missing:${agentType}: ${reason} \u2014 falling back to claude snapshot (AC-8)
+`
+    );
+    await appendTeamEvent(sanitized, {
+      type: "team_leader_nudge",
+      worker: "leader-fixed",
+      reason: `cli_binary_missing:${agentType}:${reason}`
+    }, leaderCwd).catch(missingBinaryLogFailure);
+  }
   for (let i = 0; i < config.tasks.length; i++) {
     const taskId = String(i + 1);
     const taskFilePath = absPath(leaderCwd, TeamPaths.taskFile(sanitized, taskId));
@@ -5249,6 +6282,7 @@ async function startTeamV2(config) {
     hud_pane_id: null,
     resize_hook_name: null,
     resize_hook_target: null,
+    resolved_routing: resolvedRouting,
     ...ownsWindow ? { workspace_mode: "single" } : {}
   };
   await saveTeamConfig(teamConfig, leaderCwd);
@@ -5298,6 +6332,14 @@ async function startTeamV2(config) {
     const taskId = String(decision.taskIndex + 1);
     const task = config.tasks[decision.taskIndex];
     if (!task || workerIndex < 0) continue;
+    const fallbackAgent = agentTypes[workerIndex % agentTypes.length] ?? agentTypes[0] ?? "claude";
+    const assignment = resolveTaskAssignment(
+      task,
+      resolvedRouting,
+      pluginCfg.team?.roleRouting,
+      resolvedBinaryPaths,
+      fallbackAgent
+    );
     const workerLaunch = await spawnV2Worker({
       sessionName: sessionName2,
       leaderPaneId,
@@ -5305,11 +6347,13 @@ async function startTeamV2(config) {
       teamName: sanitized,
       workerName: wName,
       workerIndex,
-      agentType: agentTypes[workerIndex % agentTypes.length] ?? agentTypes[0] ?? "claude",
+      agentType: assignment.agentType,
       task,
       taskId,
       cwd: leaderCwd,
-      resolvedBinaryPaths
+      resolvedBinaryPaths,
+      ...assignment.model ? { model: assignment.model } : {},
+      ...assignment.role ? { role: assignment.role } : {}
     });
     if (workerLaunch.paneId) {
       workerPaneIds.push(workerLaunch.paneId);
@@ -5317,6 +6361,10 @@ async function startTeamV2(config) {
       if (workerInfo) {
         workerInfo.pane_id = workerLaunch.paneId;
         workerInfo.assigned_tasks = workerLaunch.startupAssigned ? [taskId] : [];
+        workerInfo.worker_cli = assignment.agentType;
+        if (workerLaunch.outputFile) {
+          workerInfo.output_file = workerLaunch.outputFile;
+        }
       }
     }
     if (workerLaunch.startupFailureReason) {
@@ -5408,11 +6456,143 @@ async function requeueDeadWorkerTasks(teamName, deadWorkerNames, cwd) {
   }
   return requeued;
 }
+async function processCliWorkerVerdicts(teamName, cwd) {
+  const sanitized = sanitizeTeamName(teamName);
+  const config = await readTeamConfig(sanitized, cwd);
+  if (!config) return [];
+  const results = [];
+  const logEventFailure = createSwallowedErrorLogger(
+    "team.runtime-v2.processCliWorkerVerdicts appendTeamEvent failed"
+  );
+  const { rename: rename3 } = await import("fs/promises");
+  const { readFileSync: readFileSync11, writeFileSync: writeFileSync3, existsSync: fsExistsSync } = await import("fs");
+  const { withFileLockSync: withFileLockSync2 } = await Promise.resolve().then(() => (init_file_lock(), file_lock_exports));
+  for (const worker of config.workers) {
+    const outputFile = worker.output_file;
+    if (!outputFile) continue;
+    const alive = await isWorkerPaneAlive(worker.pane_id);
+    if (alive) continue;
+    if (!fsExistsSync(outputFile)) {
+      results.push({ workerName: worker.name, taskId: null, status: "file_missing" });
+      continue;
+    }
+    let payload;
+    try {
+      const raw = await readFile9(outputFile, "utf-8");
+      payload = parseCliWorkerVerdict(raw);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await appendTeamEvent(sanitized, {
+        type: "team_leader_nudge",
+        worker: "leader-fixed",
+        reason: `cli_worker_verdict_parse_failed:${worker.name}:${reason}`
+      }, cwd).catch(logEventFailure);
+      results.push({ workerName: worker.name, taskId: null, status: "parse_failed", reason });
+      continue;
+    }
+    const candidateTaskIds = /* @__PURE__ */ new Set();
+    if (payload.task_id) candidateTaskIds.add(payload.task_id);
+    for (const id of worker.assigned_tasks ?? []) candidateTaskIds.add(id);
+    let targetTaskId = null;
+    let targetTaskPath = null;
+    for (const taskId of candidateTaskIds) {
+      const taskPath2 = absPath(cwd, TeamPaths.taskFile(sanitized, taskId));
+      if (!fsExistsSync(taskPath2)) continue;
+      try {
+        const taskRaw = readFileSync11(taskPath2, "utf-8");
+        const taskData = JSON.parse(taskRaw);
+        if (taskData.owner === worker.name && taskData.status === "in_progress") {
+          targetTaskId = taskId;
+          targetTaskPath = taskPath2;
+          break;
+        }
+      } catch {
+      }
+    }
+    if (!targetTaskId || !targetTaskPath) {
+      await appendTeamEvent(sanitized, {
+        type: "team_leader_nudge",
+        worker: "leader-fixed",
+        reason: `cli_worker_verdict_no_in_progress_task:${worker.name}:verdict=${payload.verdict}`
+      }, cwd).catch(logEventFailure);
+      results.push({
+        workerName: worker.name,
+        taskId: payload.task_id,
+        status: "no_in_progress_task",
+        verdict: payload.verdict
+      });
+      continue;
+    }
+    const terminalStatus = payload.verdict === "approve" ? "completed" : "failed";
+    let transitionOk = false;
+    try {
+      withFileLockSync2(targetTaskPath + ".lock", () => {
+        const raw = readFileSync11(targetTaskPath, "utf-8");
+        const taskData = JSON.parse(raw);
+        if (taskData.status !== "in_progress" || taskData.owner !== worker.name) {
+          return;
+        }
+        const prevMetadata = taskData.metadata && typeof taskData.metadata === "object" ? taskData.metadata : {};
+        taskData.status = terminalStatus;
+        taskData.completed_at = (/* @__PURE__ */ new Date()).toISOString();
+        taskData.claim = void 0;
+        taskData.metadata = {
+          ...prevMetadata,
+          verdict: payload.verdict,
+          verdict_summary: payload.summary,
+          verdict_findings: payload.findings,
+          verdict_role: payload.role,
+          verdict_source: "cli_worker_output_contract"
+        };
+        if (terminalStatus === "failed") {
+          taskData.error = `cli_worker_verdict:${payload.verdict}:${payload.summary}`;
+        }
+        writeFileSync3(targetTaskPath, JSON.stringify(taskData, null, 2), "utf-8");
+        transitionOk = true;
+      });
+    } catch {
+    }
+    if (!transitionOk) {
+      results.push({
+        workerName: worker.name,
+        taskId: targetTaskId,
+        status: "already_terminal",
+        verdict: payload.verdict
+      });
+      continue;
+    }
+    await appendTeamEvent(sanitized, {
+      type: terminalStatus === "completed" ? "task_completed" : "task_failed",
+      worker: worker.name,
+      task_id: targetTaskId,
+      reason: `cli_worker_verdict:${payload.verdict}`
+    }, cwd).catch(logEventFailure);
+    try {
+      await rename3(outputFile, outputFile + ".processed");
+    } catch {
+    }
+    results.push({
+      workerName: worker.name,
+      taskId: targetTaskId,
+      status: terminalStatus,
+      verdict: payload.verdict
+    });
+  }
+  return results;
+}
 async function monitorTeamV2(teamName, cwd) {
   const monitorStartMs = performance.now();
   const sanitized = sanitizeTeamName(teamName);
   const config = await readTeamConfig(sanitized, cwd);
   if (!config) return null;
+  try {
+    await processCliWorkerVerdicts(sanitized, cwd);
+  } catch (err) {
+    process.stderr.write(
+      `[team/runtime-v2] processCliWorkerVerdicts failed: ${err instanceof Error ? err.message : String(err)}
+`
+    );
+  }
   const previousSnapshot = await readMonitorSnapshot(sanitized, cwd);
   const listTasksStartMs = performance.now();
   const allTasks = await listTasksFromFiles(sanitized, cwd);
@@ -5769,6 +6949,12 @@ var init_runtime_v2 = __esm({
     init_git_worktree();
     init_omc_cli_rendering();
     init_swallowed_error();
+    init_types();
+    init_loader();
+    init_stage_router();
+    init_role_router();
+    init_types2();
+    init_cli_worker_contract();
     MONITOR_SIGNAL_STALE_MS = 3e4;
     CIRCUIT_BREAKER_THRESHOLD = 3;
     CircuitBreakerV2 = class {

@@ -35,6 +35,25 @@ describe('omc CLI rendering', () => {
     expect(output).toContain('> node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs ask codex --agent-prompt critic "check"');
   });
 
+  it('keeps omc ask invocations inside an active Claude session to avoid nested bridge launches', () => {
+    const env = {
+      CLAUDE_PLUGIN_ROOT: '/tmp/plugin-root',
+      CLAUDECODE: '1',
+      CLAUDE_SESSION_ID: 'session-123',
+    } as NodeJS.ProcessEnv;
+
+    expect(resolveOmcCliPrefix({ omcAvailable: true, env })).toBe('omc');
+    expect(formatOmcCliInvocation('ask codex --prompt "check"', { omcAvailable: true, env }))
+      .toBe('omc ask codex --prompt "check"');
+
+    const input = [
+      'Run `omc ask codex "review"`.',
+      '> omc ask gemini --prompt "improve docs"',
+    ].join('\n');
+
+    expect(rewriteOmcCliInvocations(input, { omcAvailable: true, env })).toBe(input);
+  });
+
   it('leaves text unchanged when omc remains the selected prefix', () => {
     const input = 'Use `omc team status demo` and\nomc team wait demo';
     expect(rewriteOmcCliInvocations(input, { omcAvailable: true, env: {} as NodeJS.ProcessEnv })).toBe(input);

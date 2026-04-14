@@ -3058,6 +3058,53 @@ var init_config_dir = __esm({
   }
 });
 
+// src/shared/types.ts
+var CANONICAL_TEAM_ROLES, KNOWN_AGENT_NAMES;
+var init_types = __esm({
+  "src/shared/types.ts"() {
+    "use strict";
+    CANONICAL_TEAM_ROLES = [
+      "orchestrator",
+      "planner",
+      "analyst",
+      "architect",
+      "executor",
+      "debugger",
+      "critic",
+      "code-reviewer",
+      "security-reviewer",
+      "test-engineer",
+      "designer",
+      "writer",
+      "code-simplifier",
+      "explore",
+      "document-specialist"
+    ];
+    KNOWN_AGENT_NAMES = [
+      "omc",
+      "explore",
+      "analyst",
+      "planner",
+      "architect",
+      "debugger",
+      "executor",
+      "verifier",
+      "securityReviewer",
+      "codeReviewer",
+      "testEngineer",
+      "designer",
+      "writer",
+      "qaTester",
+      "scientist",
+      "tracer",
+      "gitMaster",
+      "codeSimplifier",
+      "critic",
+      "documentSpecialist"
+    ];
+  }
+});
+
 // src/utils/paths.ts
 function toForwardSlash(path22) {
   return path22.replace(/\\/g, "/");
@@ -3589,6 +3636,33 @@ var init_models = __esm({
   }
 });
 
+// src/features/delegation-routing/types.ts
+function normalizeDelegationRole(role) {
+  return DEPRECATED_ROLE_ALIASES[role] ?? role;
+}
+var DEPRECATED_ROLE_ALIASES;
+var init_types2 = __esm({
+  "src/features/delegation-routing/types.ts"() {
+    "use strict";
+    DEPRECATED_ROLE_ALIASES = {
+      researcher: "document-specialist",
+      "tdd-guide": "test-engineer",
+      "api-reviewer": "code-reviewer",
+      "performance-reviewer": "code-reviewer",
+      "dependency-expert": "document-specialist",
+      "quality-strategist": "code-reviewer",
+      vision: "document-specialist",
+      // Consolidated agent aliases (agent consolidation PR)
+      "quality-reviewer": "code-reviewer",
+      "deep-executor": "executor",
+      "build-fixer": "debugger",
+      "harsh-critic": "critic",
+      // User-friendly short alias for /team role routing (plan AC-4)
+      reviewer: "code-reviewer"
+    };
+  }
+});
+
 // src/config/loader.ts
 function buildDefaultConfig() {
   const defaultTierModels = getDefaultTierModels();
@@ -3707,6 +3781,12 @@ function buildDefaultConfig() {
       enabled: false,
       defaultProvider: "claude",
       roles: {}
+    },
+    // /team role routing (Option E — /team-scoped per-role provider & model)
+    // Empty defaults: zero behavior change until user opts in.
+    team: {
+      ops: {},
+      roleRouting: {}
     },
     planOutput: {
       directory: ".omc/plans",
@@ -3896,6 +3976,16 @@ function loadEnvConfig() {
       };
     }
   }
+  const teamRoleOverrides = parseTeamRoleOverridesFromEnv();
+  if (teamRoleOverrides) {
+    config2.team = {
+      ...config2.team,
+      roleRouting: {
+        ...config2.team?.roleRouting,
+        ...teamRoleOverrides
+      }
+    };
+  }
   return config2;
 }
 function warnOnDeprecatedDelegationRouting(config2) {
@@ -3918,6 +4008,94 @@ function warnOnDeprecatedDelegationRouting(config2) {
     "[OMC] delegationRouting to Codex/Gemini is deprecated and falls back to Claude Task. Use /team for Codex/Gemini CLI workers instead."
   );
 }
+function validateTeamConfig(config2) {
+  const team = config2.team;
+  if (!team || typeof team !== "object") return;
+  const ops = team.ops;
+  if (ops && typeof ops === "object") {
+    if (ops.defaultAgentType !== void 0) {
+      if (typeof ops.defaultAgentType !== "string" || !TEAM_ROLE_PROVIDERS.has(ops.defaultAgentType)) {
+        throw new Error(
+          `[OMC] team.ops.defaultAgentType: invalid value "${String(ops.defaultAgentType)}". Allowed: ${[...TEAM_ROLE_PROVIDERS].join(", ")}`
+        );
+      }
+    }
+  }
+  const roleRouting = team.roleRouting;
+  if (!roleRouting || typeof roleRouting !== "object") return;
+  for (const [rawRoleKey, rawSpec] of Object.entries(roleRouting)) {
+    const normalized = normalizeDelegationRole(rawRoleKey);
+    if (!CANONICAL_TEAM_ROLE_SET.has(normalized)) {
+      throw new Error(
+        `[OMC] team.roleRouting: unknown role "${rawRoleKey}". Allowed roles: ${[...CANONICAL_TEAM_ROLE_SET].join(", ")}`
+      );
+    }
+    if (!rawSpec || typeof rawSpec !== "object" || Array.isArray(rawSpec)) {
+      throw new Error(
+        `[OMC] team.roleRouting.${rawRoleKey}: must be an object, got ${Array.isArray(rawSpec) ? "array" : typeof rawSpec}`
+      );
+    }
+    const spec = rawSpec;
+    if (normalized === "orchestrator") {
+      for (const key of Object.keys(spec)) {
+        if (key !== "model") {
+          throw new Error(
+            `[OMC] team.roleRouting.orchestrator: key "${key}" is not allowed (orchestrator is pinned to claude; only "model" is configurable)`
+          );
+        }
+      }
+      if (spec.model !== void 0 && !isValidModelValue(spec.model)) {
+        throw new Error(
+          `[OMC] team.roleRouting.orchestrator.model: must be a tier name (HIGH|MEDIUM|LOW) or model ID string, got ${typeof spec.model}`
+        );
+      }
+      continue;
+    }
+    if (spec.provider !== void 0) {
+      if (typeof spec.provider !== "string" || !TEAM_ROLE_PROVIDERS.has(spec.provider)) {
+        throw new Error(
+          `[OMC] team.roleRouting.${rawRoleKey}.provider: invalid value "${String(spec.provider)}". Allowed: ${[...TEAM_ROLE_PROVIDERS].join(", ")}`
+        );
+      }
+    }
+    if (spec.model !== void 0 && !isValidModelValue(spec.model)) {
+      throw new Error(
+        `[OMC] team.roleRouting.${rawRoleKey}.model: must be a tier name (HIGH|MEDIUM|LOW) or a non-empty model ID string`
+      );
+    }
+    if (spec.agent !== void 0) {
+      if (typeof spec.agent !== "string" || !KNOWN_AGENT_NAME_SET.has(spec.agent)) {
+        throw new Error(
+          `[OMC] team.roleRouting.${rawRoleKey}.agent: unknown agent "${String(spec.agent)}". Allowed: ${[...KNOWN_AGENT_NAME_SET].join(", ")}`
+        );
+      }
+    }
+  }
+}
+function isValidModelValue(value) {
+  if (typeof value !== "string") return false;
+  if (value.length === 0) return false;
+  return TEAM_ROLE_TIERS.has(value) || value.length > 0;
+}
+function parseTeamRoleOverridesFromEnv() {
+  const raw = process.env.OMC_TEAM_ROLE_OVERRIDES;
+  if (!raw) return void 0;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      console.warn(
+        "[OMC] OMC_TEAM_ROLE_OVERRIDES: expected a JSON object; ignoring."
+      );
+      return void 0;
+    }
+    return parsed;
+  } catch (err) {
+    console.warn(
+      `[OMC] OMC_TEAM_ROLE_OVERRIDES: invalid JSON, ignoring (${err.message})`
+    );
+    return void 0;
+  }
+}
 function loadConfig() {
   const paths = getConfigPaths();
   let config2 = buildDefaultConfig();
@@ -3938,6 +4116,7 @@ function loadConfig() {
     };
   }
   warnOnDeprecatedDelegationRouting(config2);
+  validateTeamConfig(config2);
   return config2;
 }
 function looksLikeOmcGuidance(content) {
@@ -4006,16 +4185,22 @@ ${content}`);
   }
   return contexts.join("\n\n---\n\n");
 }
-var import_fs2, import_path3, DEFAULT_CONFIG, OMC_STARTUP_COMPACTABLE_SECTIONS;
+var import_fs2, import_path3, DEFAULT_CONFIG, CANONICAL_TEAM_ROLE_SET, KNOWN_AGENT_NAME_SET, TEAM_ROLE_PROVIDERS, TEAM_ROLE_TIERS, OMC_STARTUP_COMPACTABLE_SECTIONS;
 var init_loader = __esm({
   "src/config/loader.ts"() {
     "use strict";
     import_fs2 = require("fs");
     import_path3 = require("path");
+    init_types();
     init_paths();
     init_jsonc();
     init_models();
+    init_types2();
     DEFAULT_CONFIG = buildDefaultConfig();
+    CANONICAL_TEAM_ROLE_SET = new Set(CANONICAL_TEAM_ROLES);
+    KNOWN_AGENT_NAME_SET = new Set(KNOWN_AGENT_NAMES);
+    TEAM_ROLE_PROVIDERS = /* @__PURE__ */ new Set(["claude", "codex", "gemini"]);
+    TEAM_ROLE_TIERS = /* @__PURE__ */ new Set(["HIGH", "MEDIUM", "LOW"]);
     OMC_STARTUP_COMPACTABLE_SECTIONS = [
       "agent_catalog",
       "skills",
@@ -11536,7 +11721,7 @@ var init_team_canonical_state = __esm({
 
 // src/hooks/team-pipeline/types.ts
 var TEAM_PIPELINE_SCHEMA_VERSION;
-var init_types = __esm({
+var init_types3 = __esm({
   "src/hooks/team-pipeline/types.ts"() {
     "use strict";
     TEAM_PIPELINE_SCHEMA_VERSION = 1;
@@ -11628,7 +11813,7 @@ var init_state = __esm({
     init_atomic_write();
     init_worktree_paths();
     init_team_canonical_state();
-    init_types();
+    init_types3();
   }
 });
 
@@ -11929,6 +12114,11 @@ function commandExists2(command, env2) {
   });
   return result.status === 0;
 }
+function isClaudeSession(env2) {
+  return Boolean(
+    env2.CLAUDECODE?.trim() || env2.CLAUDE_SESSION_ID?.trim() || env2.CLAUDECODE_SESSION_ID?.trim()
+  );
+}
 function resolveOmcCliPrefix(options = {}) {
   const env2 = options.env ?? process.env;
   const omcAvailable = options.omcAvailable ?? commandExists2(OMC_CLI_BINARY, env2);
@@ -11941,16 +12131,29 @@ function resolveOmcCliPrefix(options = {}) {
   }
   return OMC_CLI_BINARY;
 }
+function resolveInvocationPrefix(commandSuffix, options = {}) {
+  const env2 = options.env ?? process.env;
+  const normalizedSuffix = commandSuffix.trim();
+  if (/^ask(?:\s|$)/.test(normalizedSuffix) && isClaudeSession(env2)) {
+    return OMC_CLI_BINARY;
+  }
+  return resolveOmcCliPrefix(options);
+}
 function formatOmcCliInvocation(commandSuffix, options = {}) {
   const suffix = commandSuffix.trim().replace(/^omc\s+/, "");
-  return `${resolveOmcCliPrefix(options)} ${suffix}`.trim();
+  return `${resolveInvocationPrefix(suffix, options)} ${suffix}`.trim();
 }
 function rewriteOmcCliInvocations(text, options = {}) {
-  const prefix = resolveOmcCliPrefix(options);
-  if (prefix === OMC_CLI_BINARY || !text.includes("omc ")) {
+  if (!text.includes("omc ")) {
     return text;
   }
-  return text.replace(/`omc (?=[^`\r\n]+`)/g, `\`${prefix} `).replace(/(^|\n)([ \t>*-]*)omc (?=\S)/g, `$1$2${prefix} `);
+  return text.replace(/`omc ([^`\r\n]+)`/g, (_match, suffix) => {
+    const prefix = resolveInvocationPrefix(suffix, options);
+    return `\`${prefix} ${suffix}\``;
+  }).replace(/(^|\n)([ \t>*-]*)omc ([^\n]+)/g, (_match, lineStart, leader, suffix) => {
+    const prefix = resolveInvocationPrefix(suffix, options);
+    return `${lineStart}${leader}${prefix} ${suffix}`;
+  });
 }
 var import_child_process16, OMC_CLI_BINARY, OMC_PLUGIN_BRIDGE_PREFIX;
 var init_omc_cli_rendering = __esm({
@@ -13228,7 +13431,7 @@ var init_mission_board = __esm({
 
 // src/hud/types.ts
 var DEFAULT_ELEMENT_ORDER, DEFAULT_HUD_USAGE_POLL_INTERVAL_MS, DEFAULT_HUD_CONFIG, PRESET_CONFIGS;
-var init_types2 = __esm({
+var init_types4 = __esm({
   "src/hud/types.ts"() {
     "use strict";
     init_mission_board();
@@ -13911,7 +14114,7 @@ var init_state2 = __esm({
     init_config_dir();
     init_worktree_paths();
     init_atomic_write();
-    init_types2();
+    init_types4();
     init_mission_board();
     init_background_cleanup();
   }
@@ -15689,7 +15892,7 @@ var init_prompt_helpers = __esm({
 
 // src/hooks/autopilot/types.ts
 var DEFAULT_CONFIG4;
-var init_types3 = __esm({
+var init_types5 = __esm({
   "src/hooks/autopilot/types.ts"() {
     "use strict";
     DEFAULT_CONFIG4 = {
@@ -16121,7 +16324,7 @@ var init_state3 = __esm({
     import_path62 = require("path");
     init_mode_state_io();
     init_worktree_paths();
-    init_types3();
+    init_types5();
     init_loader();
     init_plan_output();
     init_ralph();
@@ -19157,7 +19360,7 @@ __export(autopilot_exports, {
 var init_autopilot = __esm({
   "src/hooks/autopilot/index.ts"() {
     "use strict";
-    init_types3();
+    init_types5();
     init_state3();
     init_prompts();
     init_validation();
@@ -20815,6 +21018,21 @@ function looksLikeAlertRegexLiteral(line) {
   const trimmed = line.trim();
   return STRUCTURED_ALERT_KEYWORD_RE.test(trimmed) && ALERT_REGEX_LITERAL_RE.test(trimmed);
 }
+function isCommandBoilerplateLine(line) {
+  return /^(?:command failed with exit code \d+:|exit code \d+)$/i.test(line.trim());
+}
+function stripLeadingNoisePrefix(lines) {
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index].trim();
+    if (PERMISSION_DENIED_SCAN_LINE_RE.test(line) || CLEAN_DIAGNOSTIC_QUERY_RE.test(line) || GENERIC_HOOK_FAILURE_PROSE_RE.test(line) || ISSUE_PROMPT_NOISE_RE.test(line) || ZERO_ALERT_SUMMARY_RE.test(line) || isCommandBoilerplateLine(line)) {
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  return index > 0 ? lines.slice(index) : lines;
+}
 function parseTmuxTail(raw, maxLines = DEFAULT_MAX_TAIL_LINES) {
   const meaningful = [];
   for (const line of raw.split("\n")) {
@@ -20835,6 +21053,8 @@ function parseTmuxTail(raw, maxLines = DEFAULT_MAX_TAIL_LINES) {
     if (ZERO_ALERT_SUMMARY_RE.test(trimmed2)) continue;
     if (GENERIC_HOOK_FAILURE_PROSE_RE.test(trimmed2)) continue;
     if (ISSUE_PROMPT_NOISE_RE.test(trimmed2)) continue;
+    if (PERMISSION_DENIED_SCAN_LINE_RE.test(trimmed2)) continue;
+    if (CLEAN_DIAGNOSTIC_QUERY_RE.test(trimmed2)) continue;
     if (SOURCE_PATH_LINE_RE.test(trimmed2) && STATIC_CODE_ALERT_RE.test(trimmed2)) continue;
     if (SOURCE_PATH_LINE_RE.test(trimmed2)) {
       const sourceContent = trimmed2.replace(SOURCE_PATH_LINE_RE, "").trim();
@@ -20847,7 +21067,7 @@ function parseTmuxTail(raw, maxLines = DEFAULT_MAX_TAIL_LINES) {
     meaningful.push(stripped.trimEnd());
   }
   const trimmed = trimReviewSeedPrefix(meaningful);
-  return trimmed.slice(-maxLines).join("\n");
+  return stripLeadingNoisePrefix(trimmed).slice(-maxLines).join("\n");
 }
 function appendTmuxTail(lines, payload) {
   if (payload.tmuxTail) {
@@ -20902,7 +21122,7 @@ function formatNotification(payload) {
       return payload.message || `Event: ${payload.event}`;
   }
 }
-var import_path67, ANSI_ESCAPE_RE, UI_CHROME_RE, CTRL_O_RE, BOX_DRAWING_RE, OMC_HUD_RE, BYPASS_PERM_RE, BARE_PROMPT_RE, MIN_ALNUM_RATIO, REVIEW_SEED_OUTCOME_PATTERNS, REVIEW_SEED_CUE_RE, REVIEW_SEED_LIST_RE, SOURCE_PATH_LINE_RE, STATIC_CODE_ALERT_RE, HELP_USAGE_LINE_RE, STATIC_HELP_CODE_RE, DIFF_HEADER_LINE_RE, STRUCTURED_ALERT_KEYWORD_RE, SEARCH_COMMAND_RE, QUOTED_OR_REGEX_QUERY_RE, ZERO_ALERT_SUMMARY_RE, ALERT_REGEX_LITERAL_RE, GENERIC_HOOK_FAILURE_PROSE_RE, ISSUE_PROMPT_NOISE_RE, JSONISH_LINE_RE, REQUEST_RESPONSE_LITERAL_RE, CODE_LITERAL_PREFIX_RE, DEFAULT_MAX_TAIL_LINES;
+var import_path67, ANSI_ESCAPE_RE, UI_CHROME_RE, CTRL_O_RE, BOX_DRAWING_RE, OMC_HUD_RE, BYPASS_PERM_RE, BARE_PROMPT_RE, MIN_ALNUM_RATIO, REVIEW_SEED_OUTCOME_PATTERNS, REVIEW_SEED_CUE_RE, REVIEW_SEED_LIST_RE, SOURCE_PATH_LINE_RE, STATIC_CODE_ALERT_RE, HELP_USAGE_LINE_RE, STATIC_HELP_CODE_RE, DIFF_HEADER_LINE_RE, STRUCTURED_ALERT_KEYWORD_RE, SEARCH_COMMAND_RE, QUOTED_OR_REGEX_QUERY_RE, ZERO_ALERT_SUMMARY_RE, ALERT_REGEX_LITERAL_RE, GENERIC_HOOK_FAILURE_PROSE_RE, ISSUE_PROMPT_NOISE_RE, PERMISSION_DENIED_SCAN_LINE_RE, CLEAN_DIAGNOSTIC_QUERY_RE, JSONISH_LINE_RE, REQUEST_RESPONSE_LITERAL_RE, CODE_LITERAL_PREFIX_RE, DEFAULT_MAX_TAIL_LINES;
 var init_formatter = __esm({
   "src/notifications/formatter.ts"() {
     "use strict";
@@ -20938,6 +21158,8 @@ var init_formatter = __esm({
     ALERT_REGEX_LITERAL_RE = /(?:^|[=(:,]\s*)(?:new\s+RegExp\(|\/)(?=[^)\n;]*\b(?:error|errors?|fail(?:ed|ure|ures)?|conflict|conflicts|operation_failed|claim_conflict|invalid_transition|blocked_dependency|worker_notify_failed)\b)/i;
     GENERIC_HOOK_FAILURE_PROSE_RE = /^The Bash output indicates (?:a )?(?:command\/setup|command|setup) failure\b/i;
     ISSUE_PROMPT_NOISE_RE = /^(?:fix|review|investigate|analyze|search|find|look\s+for|debug|harden)\b.*\b(?:issue|pr)\s*#\d+\b.*\b(?:error|errors?|fail(?:ed|ure|ures)?|conflict|conflicts)\b/i;
+    PERMISSION_DENIED_SCAN_LINE_RE = /^(?:find|grep|rg): .*permission denied$/i;
+    CLEAN_DIAGNOSTIC_QUERY_RE = /^(?:[$❯>#]\s*)?(?:rg|ripgrep|grep)\b.*\b(?:severity\s*[:=]\s*["']?error["']?|diagnostic(?:s)?|lsp_diagnostics(?:_directory)?)\b/i;
     JSONISH_LINE_RE = /^(?:[{[]|"(?:[^"\\]|\\.)+"\s*:|'(?:[^'\\]|\\.)+'\s*:)/;
     REQUEST_RESPONSE_LITERAL_RE = /^(?:payload|request|response|input|output|args|params|body|mcp)\s*[:=]\s*[{[]/i;
     CODE_LITERAL_PREFIX_RE = /^(?:[+-]\s*(?:[{[]|"(?:[^"\\]|\\.)+"\s*:|'(?:[^'\\]|\\.)+'\s*:|(?:const|let|var|return|throw|if|await|expect|mock|vi\.)\b|[A-Za-z_$][\w$-]*\s*:)|(?:const|let|var|return|throw|if|await|expect|mock|vi\.)\b)/;
@@ -26860,13 +27082,6 @@ var init_team_name = __esm({
   }
 });
 
-// src/features/delegation-routing/types.ts
-var init_types4 = __esm({
-  "src/features/delegation-routing/types.ts"() {
-    "use strict";
-  }
-});
-
 // src/features/delegation-enforcer.ts
 function normalizeToCcAlias(model) {
   const family = resolveClaudeFamily(model);
@@ -26877,7 +27092,7 @@ var init_delegation_enforcer = __esm({
   "src/features/delegation-enforcer.ts"() {
     "use strict";
     init_definitions();
-    init_types4();
+    init_types2();
     init_loader();
     init_models();
     FAMILY_TO_ALIAS = {
@@ -27914,11 +28129,13 @@ function generateTriggerMessage(teamName, workerName2, teamStateRoot2 = ".omc/st
   if (teamStateRoot2 !== ".omc/state") {
     return `Read ${inboxPath}, work now, report progress.`;
   }
-  return `Read ${inboxPath}, start work now, report concrete progress (not ACK-only), and keep executing your assigned or next feasible work.`;
+  return `Read ${inboxPath}, execute now, report concrete progress.`;
 }
-function generatePromptModeStartupPrompt(teamName, workerName2, teamStateRoot2 = ".omc/state") {
+function generatePromptModeStartupPrompt(teamName, workerName2, teamStateRoot2 = ".omc/state", cliOutputContract) {
   const inboxPath = buildInstructionPath(teamStateRoot2, "team", teamName, "workers", workerName2, "inbox.md");
-  return `Open ${inboxPath}. Follow it and begin the assigned work.`;
+  const base = `Open ${inboxPath}. Follow it and begin the assigned work.`;
+  return cliOutputContract ? `${base}
+${cliOutputContract}` : base;
 }
 function generateMailboxTriggerMessage(teamName, workerName2, count = 1, teamStateRoot2 = ".omc/state") {
   const normalizedCount = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
@@ -27926,7 +28143,7 @@ function generateMailboxTriggerMessage(teamName, workerName2, count = 1, teamSta
   if (teamStateRoot2 !== ".omc/state") {
     return `${normalizedCount} new msg(s): check ${mailboxPath2}, act and report progress.`;
   }
-  return `You have ${normalizedCount} new message(s). Check ${mailboxPath2}, act now, reply with concrete progress (not ACK-only), and keep executing your assigned or next feasible work.`;
+  return `${normalizedCount} new msg(s). Read ${mailboxPath2}, act now, report concrete progress.`;
 }
 function agentTypeGuidance(agentType) {
   const teamApiCommand = formatOmcCliInvocation("team api");
@@ -28073,10 +28290,12 @@ ${bootstrapInstructions ? `## Role Context
 ${bootstrapInstructions}
 ` : ""}`;
 }
-async function composeInitialInbox(teamName, workerName2, content, cwd2) {
+async function composeInitialInbox(teamName, workerName2, content, cwd2, cliOutputContract) {
   const inboxPath = (0, import_path85.join)(cwd2, `.omc/state/team/${teamName}/workers/${workerName2}/inbox.md`);
   await (0, import_promises11.mkdir)((0, import_path85.dirname)(inboxPath), { recursive: true });
-  await (0, import_promises11.writeFile)(inboxPath, content, "utf-8");
+  const finalContent = cliOutputContract && !content.includes(cliOutputContract) ? `${content}
+${cliOutputContract}` : content;
+  await (0, import_promises11.writeFile)(inboxPath, finalContent, "utf-8");
 }
 async function ensureWorkerStateDir(teamName, workerName2, cwd2) {
   const workerDir = (0, import_path85.join)(cwd2, `.omc/state/team/${teamName}/workers/${workerName2}`);
@@ -28728,6 +28947,427 @@ var init_git_worktree = __esm({
   }
 });
 
+// src/team/stage-router.ts
+function isTier(value) {
+  return TIER_SET.has(value);
+}
+function getRoleRoutingSpec(roleRouting, role) {
+  if (!roleRouting) return void 0;
+  const normalizedRole = normalizeDelegationRole(role);
+  const direct = roleRouting[normalizedRole];
+  if (direct) return direct;
+  for (const [rawRole, spec] of Object.entries(roleRouting)) {
+    if (spec && normalizeDelegationRole(rawRole) === normalizedRole) {
+      return spec;
+    }
+  }
+  return void 0;
+}
+function resolveTierToModelId(tier, cfg) {
+  const fromCfg = cfg.routing?.tierModels?.[tier];
+  if (typeof fromCfg === "string" && fromCfg.length > 0) return fromCfg;
+  return getDefaultTierModels()[tier];
+}
+function resolveClaudeModel(role, raw, cfg) {
+  if (typeof raw === "string" && raw.length > 0) {
+    return isTier(raw) ? resolveTierToModelId(raw, cfg) : raw;
+  }
+  return resolveTierToModelId(ROLE_DEFAULT_TIER[role], cfg);
+}
+function resolveExternalModel(provider, raw, cfg) {
+  if (typeof raw === "string" && raw.length > 0 && !isTier(raw)) {
+    return raw;
+  }
+  const defaults = cfg.externalModels?.defaults;
+  if (provider === "codex") {
+    return defaults?.codexModel ?? BUILTIN_EXTERNAL_MODEL_DEFAULTS.codexModel;
+  }
+  return defaults?.geminiModel ?? BUILTIN_EXTERNAL_MODEL_DEFAULTS.geminiModel;
+}
+function resolveRoleAssignment(role, cfg) {
+  const normalized = normalizeDelegationRole(role);
+  const canonical = isCanonicalRole(normalized) ? normalized : role;
+  const roleRouting = cfg.team?.roleRouting;
+  const spec = getRoleRoutingSpec(roleRouting, canonical);
+  const isOrchestrator = canonical === "orchestrator";
+  const provider = isOrchestrator ? "claude" : spec?.provider ?? "claude";
+  const model = provider === "claude" ? resolveClaudeModel(canonical, spec?.model, cfg) : resolveExternalModel(provider, spec?.model, cfg);
+  const agent = spec?.agent ?? ROLE_TO_AGENT[canonical];
+  return { provider, model, agent };
+}
+function isCanonicalRole(value) {
+  return CANONICAL_TEAM_ROLES.includes(value);
+}
+function buildResolvedRoutingSnapshot(cfg) {
+  const out = {};
+  const roleRouting = cfg.team?.roleRouting;
+  for (const role of CANONICAL_TEAM_ROLES) {
+    const primary = resolveRoleAssignment(role, cfg);
+    const spec = getRoleRoutingSpec(roleRouting, role);
+    const isExternalPrimary = primary.provider !== "claude";
+    const fallbackModelInput = isExternalPrimary && spec?.model && !isTier(spec.model) ? void 0 : spec?.model;
+    const fallback = {
+      provider: "claude",
+      model: resolveClaudeModel(role, fallbackModelInput, cfg),
+      agent: primary.agent
+    };
+    out[role] = { primary, fallback };
+  }
+  return out;
+}
+var ROLE_TO_AGENT, ROLE_DEFAULT_TIER, TIER_SET;
+var init_stage_router = __esm({
+  "src/team/stage-router.ts"() {
+    "use strict";
+    init_types();
+    init_types2();
+    init_models();
+    ROLE_TO_AGENT = {
+      orchestrator: "omc",
+      planner: "planner",
+      analyst: "analyst",
+      architect: "architect",
+      executor: "executor",
+      debugger: "debugger",
+      critic: "critic",
+      "code-reviewer": "codeReviewer",
+      "security-reviewer": "securityReviewer",
+      "test-engineer": "testEngineer",
+      designer: "designer",
+      writer: "writer",
+      "code-simplifier": "codeSimplifier",
+      explore: "explore",
+      "document-specialist": "documentSpecialist"
+    };
+    ROLE_DEFAULT_TIER = {
+      orchestrator: "HIGH",
+      planner: "HIGH",
+      analyst: "HIGH",
+      architect: "HIGH",
+      executor: "MEDIUM",
+      debugger: "MEDIUM",
+      critic: "HIGH",
+      "code-reviewer": "HIGH",
+      "security-reviewer": "MEDIUM",
+      "test-engineer": "MEDIUM",
+      designer: "MEDIUM",
+      writer: "LOW",
+      "code-simplifier": "HIGH",
+      explore: "LOW",
+      "document-specialist": "MEDIUM"
+    };
+    TIER_SET = /* @__PURE__ */ new Set(["HIGH", "MEDIUM", "LOW"]);
+  }
+});
+
+// src/team/role-router.ts
+function inferLaneIntent(text) {
+  if (!text || text.trim().length === 0) return "unknown";
+  for (const { intent, patterns } of INTENT_PATTERNS) {
+    for (const pattern of patterns) {
+      if (pattern.test(text)) {
+        return intent;
+      }
+    }
+  }
+  return "unknown";
+}
+function routeTaskToRole(taskSubject, taskDescription, fallbackRole) {
+  const combined = `${taskSubject} ${taskDescription}`.trim();
+  const intent = inferLaneIntent(combined);
+  const isSecurityDomain = SECURITY_DOMAIN_RE.test(combined);
+  switch (intent) {
+    case "build-fix":
+      return { role: "build-fixer", confidence: "high", reason: "build-fix intent detected" };
+    case "debug":
+      return { role: "debugger", confidence: "high", reason: "debug intent detected" };
+    case "docs":
+      return { role: "writer", confidence: "high", reason: "docs intent detected" };
+    case "design":
+      return { role: "designer", confidence: "high", reason: "design intent detected" };
+    case "cleanup":
+      return { role: "code-simplifier", confidence: "high", reason: "cleanup intent detected" };
+    case "review":
+      if (isSecurityDomain) {
+        return { role: "security-reviewer", confidence: "high", reason: "review intent with security domain detected" };
+      }
+      return { role: "quality-reviewer", confidence: "high", reason: "review intent detected" };
+    case "verification":
+      return { role: "test-engineer", confidence: "high", reason: "verification intent detected" };
+    case "implementation":
+      return {
+        role: fallbackRole,
+        confidence: "medium",
+        reason: isSecurityDomain ? "implementation intent with security domain \u2014 stays on fallback role" : "implementation intent \u2014 using fallback role"
+      };
+    case "unknown":
+    default: {
+      const best = scoreByKeywords(combined);
+      if (best) {
+        return {
+          role: best.role,
+          confidence: "medium",
+          reason: `keyword match (${best.count} hits) for role '${best.role}'`
+        };
+      }
+      return {
+        role: fallbackRole,
+        confidence: "low",
+        reason: "no clear intent signal \u2014 using fallback role"
+      };
+    }
+  }
+}
+function scoreByKeywords(text) {
+  let bestRole = null;
+  let bestCount = 0;
+  for (const [role, patterns] of Object.entries(ROLE_KEYWORDS)) {
+    const count = patterns.filter((p) => p.test(text)).length;
+    if (count > bestCount) {
+      bestCount = count;
+      bestRole = role;
+    }
+  }
+  return bestRole && bestCount > 0 ? { role: bestRole, count: bestCount } : null;
+}
+var INTENT_PATTERNS, SECURITY_DOMAIN_RE, ROLE_KEYWORDS;
+var init_role_router = __esm({
+  "src/team/role-router.ts"() {
+    "use strict";
+    INTENT_PATTERNS = [
+      {
+        intent: "build-fix",
+        patterns: [
+          /\bfix(?:ing)?\s+(?:the\s+)?(?:build|ci|lint|compile|tsc|type.?check)/i,
+          /\bfailing\s+build\b/i,
+          /\bbuild\s+(?:error|fail|broken|fix)/i,
+          /\btsc\s+error/i,
+          /\bcompile\s+error/i,
+          /\bci\s+(?:fail|broken|fix)/i
+        ]
+      },
+      {
+        intent: "debug",
+        patterns: [
+          /\bdebug(?:ging)?\b/i,
+          /\btroubleshoot(?:ing)?\b/i,
+          /\binvestigate\b/i,
+          /\broot.?cause\b/i,
+          /\bwhy\s+(?:is|does|did|are)\b/i,
+          /\bdiagnos(?:e|ing)\b/i,
+          /\btrace\s+(?:the|an?)\s+(?:bug|issue|error|problem)/i
+        ]
+      },
+      {
+        intent: "docs",
+        patterns: [
+          /\bdocument(?:ation|ing|ation)?\b/i,
+          /\bwrite\s+(?:docs|readme|changelog|comments|jsdoc|tsdoc)/i,
+          /\bupdate\s+(?:docs|readme|changelog)/i,
+          /\badd\s+(?:docs|comments|jsdoc|tsdoc)\b/i,
+          /\breadme\b/i,
+          /\bchangelog\b/i
+        ]
+      },
+      {
+        intent: "design",
+        patterns: [
+          /\bdesign\b/i,
+          /\barchitect(?:ure|ing)?\b/i,
+          /\bui\s+(?:design|layout|component)/i,
+          /\bux\b/i,
+          /\bwireframe\b/i,
+          /\bmockup\b/i,
+          /\bprototype\b/i,
+          /\bsystem\s+design\b/i,
+          /\bapi\s+design\b/i
+        ]
+      },
+      {
+        intent: "cleanup",
+        patterns: [
+          /\bclean\s*up\b/i,
+          /\brefactor(?:ing)?\b/i,
+          /\bsimplif(?:y|ying)\b/i,
+          /\bdead\s+code\b/i,
+          /\bunused\s+(?:code|import|variable|function)\b/i,
+          /\bremove\s+(?:dead|unused|legacy)\b/i,
+          /\bdebt\b/i
+        ]
+      },
+      {
+        intent: "review",
+        patterns: [
+          /\breview\b/i,
+          /\baudit\b/i,
+          /\bpr\s+review\b/i,
+          /\bcode\s+review\b/i,
+          /\bcheck\s+(?:the\s+)?(?:code|pr|pull.?request)\b/i
+        ]
+      },
+      {
+        intent: "verification",
+        patterns: [
+          /\btest(?:ing|s)?\b/i,
+          /\bverif(?:y|ication)\b/i,
+          /\bvalidat(?:e|ion)\b/i,
+          /\bunit\s+test\b/i,
+          /\bintegration\s+test\b/i,
+          /\be2e\b/i,
+          /\bspec\b/i,
+          /\bcoverage\b/i,
+          /\bassert(?:ion)?\b/i
+        ]
+      },
+      {
+        intent: "implementation",
+        patterns: [
+          /\bimplement(?:ing|ation)?\b/i,
+          /\badd\s+(?:the\s+)?(?:feature|function|method|class|endpoint|route)\b/i,
+          /\bbuild\s+(?:the\s+)?(?:feature|component|module|service|api)\b/i,
+          /\bcreate\s+(?:the\s+)?(?:feature|component|module|service|api|function)\b/i,
+          /\bwrite\s+(?:the\s+)?(?:code|function|class|method|module)\b/i
+        ]
+      }
+    ];
+    SECURITY_DOMAIN_RE = /\b(?:auth(?:entication|orization)?|cve|injection|owasp|security|vulnerability|vuln|xss|csrf|sqli|rce|privilege.?escalat)\b/i;
+    ROLE_KEYWORDS = {
+      "build-fixer": [/\bbuild\b/i, /\bci\b/i, /\bcompile\b/i, /\btsc\b/i, /\blint\b/i],
+      debugger: [/\bdebug\b/i, /\btroubleshoot\b/i, /\binvestigate\b/i, /\bdiagnos/i],
+      writer: [/\bdoc(?:ument)?/i, /\breadme\b/i, /\bchangelog\b/i, /\bcomment/i],
+      designer: [/\bdesign\b/i, /\barchitect/i, /\bui\b/i, /\bux\b/i, /\bwireframe\b/i],
+      "code-simplifier": [/\brefactor/i, /\bclean/i, /\bsimplif/i, /\bdebt\b/i, /\bunused\b/i],
+      "security-reviewer": [/\bsecurity\b/i, /\bvulnerabilit/i, /\bcve\b/i, /\bowasp\b/i, /\bxss\b/i],
+      "quality-reviewer": [/\breview\b/i, /\baudit\b/i, /\bcheck\b/i],
+      "test-engineer": [/\btest/i, /\bverif/i, /\bvalidat/i, /\bspec\b/i, /\bcoverage\b/i],
+      executor: [/\bimplement/i, /\bbuild\b/i, /\bcreate\b/i, /\badd\b/i, /\bwrite\b/i]
+    };
+  }
+});
+
+// src/team/cli-worker-contract.ts
+function shouldInjectContract(role, provider) {
+  if (!role || !provider) return false;
+  if (provider === "claude") return false;
+  return CONTRACT_ROLES.has(role);
+}
+function renderCliWorkerOutputContract(role, output_file) {
+  return [
+    "",
+    "---",
+    "## REQUIRED: Structured Verdict Output",
+    "",
+    `You are acting in the \`${role}\` role. Before you exit, write a JSON verdict to:`,
+    "",
+    `    ${output_file}`,
+    "",
+    "Schema (all keys required; `findings` may be an empty array):",
+    "",
+    "```json",
+    "{",
+    `  "role": "${role}",`,
+    '  "task_id": "<task id from the assignment above>",',
+    '  "verdict": "approve" | "revise" | "reject",',
+    '  "summary": "one- or two-sentence overall assessment",',
+    '  "findings": [',
+    "    {",
+    '      "severity": "critical" | "major" | "minor" | "nit",',
+    '      "message": "what is wrong and why it matters",',
+    '      "file": "optional/path/to/file",',
+    '      "line": 42',
+    "    }",
+    "  ]",
+    "}",
+    "```",
+    "",
+    "Rules:",
+    "- Write valid JSON only (no surrounding prose, no markdown fences in the file).",
+    "- `verdict` MUST be one of `approve`, `revise`, or `reject`.",
+    "- Each finding MUST carry a `severity` from the enum above.",
+    "- Use `approve` only when you have no blocking concerns.",
+    '- If you cannot produce a verdict, write `{"verdict":"revise", ...}` with an explanatory finding rather than exiting silently.',
+    "- The team leader reads this file to mark the task complete; omitting it leaves the task stuck in_progress pending human review.",
+    ""
+  ].join("\n");
+}
+function parseCliWorkerVerdict(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`verdict_json_parse_failed: ${err.message}`);
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("verdict_not_object");
+  }
+  const obj = parsed;
+  const role = obj.role;
+  if (typeof role !== "string" || !role) {
+    throw new Error("verdict_missing_role");
+  }
+  const taskId = obj.task_id;
+  if (typeof taskId !== "string" || !taskId) {
+    throw new Error("verdict_missing_task_id");
+  }
+  const verdict = obj.verdict;
+  if (typeof verdict !== "string" || !VALID_VERDICTS.has(verdict)) {
+    throw new Error(`verdict_invalid_verdict:${String(verdict)}`);
+  }
+  const summary = obj.summary;
+  if (typeof summary !== "string") {
+    throw new Error("verdict_missing_summary");
+  }
+  const findingsRaw = obj.findings;
+  if (!Array.isArray(findingsRaw)) {
+    throw new Error("verdict_findings_not_array");
+  }
+  const findings = findingsRaw.map((entry, idx) => {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`verdict_finding_${idx}_not_object`);
+    }
+    const f = entry;
+    const severity = f.severity;
+    if (typeof severity !== "string" || !VALID_SEVERITIES.has(severity)) {
+      throw new Error(`verdict_finding_${idx}_invalid_severity:${String(severity)}`);
+    }
+    const message = f.message;
+    if (typeof message !== "string" || !message) {
+      throw new Error(`verdict_finding_${idx}_missing_message`);
+    }
+    const finding = {
+      severity,
+      message
+    };
+    if (typeof f.file === "string" && f.file) finding.file = f.file;
+    if (typeof f.line === "number" && Number.isFinite(f.line)) finding.line = f.line;
+    return finding;
+  });
+  return {
+    role,
+    task_id: taskId,
+    verdict,
+    summary,
+    findings
+  };
+}
+function cliWorkerOutputFilePath(teamStateRootAbs, workerName2) {
+  return `${teamStateRootAbs.replaceAll("\\", "/")}/workers/${workerName2}/verdict.json`;
+}
+var CONTRACT_ROLES, VALID_VERDICTS, VALID_SEVERITIES;
+var init_cli_worker_contract = __esm({
+  "src/team/cli-worker-contract.ts"() {
+    "use strict";
+    CONTRACT_ROLES = /* @__PURE__ */ new Set([
+      "critic",
+      "code-reviewer",
+      "security-reviewer",
+      "test-engineer"
+    ]);
+    VALID_VERDICTS = /* @__PURE__ */ new Set(["approve", "revise", "reject"]);
+    VALID_SEVERITIES = /* @__PURE__ */ new Set(["critical", "major", "minor", "nit"]);
+  }
+});
+
 // src/team/runtime-v2.ts
 var runtime_v2_exports = {};
 __export(runtime_v2_exports, {
@@ -28735,6 +29375,7 @@ __export(runtime_v2_exports, {
   findActiveTeamsV2: () => findActiveTeamsV2,
   isRuntimeV2Enabled: () => isRuntimeV2Enabled,
   monitorTeamV2: () => monitorTeamV2,
+  processCliWorkerVerdicts: () => processCliWorkerVerdicts,
   requeueDeadWorkerTasks: () => requeueDeadWorkerTasks,
   resumeTeamV2: () => resumeTeamV2,
   shutdownTeamV2: () => shutdownTeamV2,
@@ -28746,6 +29387,34 @@ function isRuntimeV2Enabled(env2 = process.env) {
   if (!raw) return true;
   const normalized = raw.trim().toLowerCase();
   return !["0", "false", "no", "off"].includes(normalized);
+}
+function resolveTaskAssignment(task, resolvedRouting, roleRoutingConfig, resolvedBinaryPaths, fallbackAgent) {
+  const canonicalRoles = new Set(CANONICAL_TEAM_ROLES);
+  const hasExplicitRole = typeof task.role === "string" && task.role.length > 0;
+  const rawRole = hasExplicitRole ? task.role : routeTaskToRole(task.subject, task.description, "executor").role;
+  const normalized = normalizeDelegationRole(rawRole);
+  const canonical = canonicalRoles.has(normalized) ? normalized : null;
+  if (!canonical) {
+    return { agentType: fallbackAgent, model: "", role: null };
+  }
+  const hasConfigForRole = !!getRoleRoutingSpec(
+    roleRoutingConfig,
+    canonical
+  );
+  if (!hasExplicitRole && !hasConfigForRole) {
+    return { agentType: fallbackAgent, model: "", role: canonical };
+  }
+  const pair = resolvedRouting[canonical];
+  if (!pair) {
+    return { agentType: fallbackAgent, model: "", role: canonical };
+  }
+  const primaryProvider = pair.primary.provider;
+  const chosen = resolvedBinaryPaths[primaryProvider] ? pair.primary : pair.fallback;
+  return {
+    agentType: chosen.provider,
+    model: chosen.model,
+    role: canonical
+  };
 }
 function sanitizeTeamName(name) {
   const sanitized = name.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
@@ -28794,7 +29463,7 @@ function getTaskDependencyIds2(task) {
 function getMissingDependencyIds(task, taskById) {
   return getTaskDependencyIds2(task).filter((dependencyId) => !taskById.has(dependencyId));
 }
-function buildV2TaskInstruction(teamName, workerName2, task, taskId) {
+function buildV2TaskInstruction(teamName, workerName2, task, taskId, cliOutputContract) {
   const claimTaskCommand = formatOmcCliInvocation(
     `team api claim-task --input '${JSON.stringify({ team_name: teamName, task_id: taskId, worker: workerName2 })}' --json`,
     {}
@@ -28826,7 +29495,8 @@ function buildV2TaskInstruction(teamName, workerName2, task, taskId) {
     ``,
     task.description,
     ``,
-    `REMINDER: You MUST run transition-task-status before exiting. Do NOT write done.json or edit task files directly.`
+    `REMINDER: You MUST run transition-task-status before exiting. Do NOT write done.json or edit task files directly.`,
+    ...cliOutputContract ? [cliOutputContract] : []
   ].join("\n");
 }
 async function notifyStartupInbox(sessionName2, paneId, message) {
@@ -28895,16 +29565,31 @@ async function spawnV2Worker(opts) {
     return { paneId: null, startupAssigned: false, startupFailureReason: "pane_id_missing" };
   }
   const usePromptMode = isPromptModeAgent(opts.agentType);
+  const injectContract = shouldInjectContract(opts.role ?? null, opts.agentType);
+  const outputFile = injectContract && opts.role ? cliWorkerOutputFilePath(teamStateRoot(opts.cwd, opts.teamName), opts.workerName) : void 0;
+  const cliOutputContract = injectContract && opts.role && outputFile ? renderCliWorkerOutputContract(opts.role, outputFile) : void 0;
   const instruction = buildV2TaskInstruction(
     opts.teamName,
     opts.workerName,
     opts.task,
-    opts.taskId
+    opts.taskId,
+    cliOutputContract
   );
   const inboxTriggerMessage = generateTriggerMessage(opts.teamName, opts.workerName);
-  const promptModeStartupPrompt = generatePromptModeStartupPrompt(opts.teamName, opts.workerName);
+  const promptModeStartupPrompt = generatePromptModeStartupPrompt(
+    opts.teamName,
+    opts.workerName,
+    void 0,
+    cliOutputContract
+  );
   if (usePromptMode) {
-    await composeInitialInbox(opts.teamName, opts.workerName, instruction, opts.cwd);
+    await composeInitialInbox(
+      opts.teamName,
+      opts.workerName,
+      instruction,
+      opts.cwd,
+      cliOutputContract
+    );
   }
   const envVars = {
     ...getWorkerEnv(opts.teamName, opts.workerName, opts.agentType),
@@ -28912,7 +29597,7 @@ async function spawnV2Worker(opts) {
     OMC_TEAM_LEADER_CWD: opts.cwd
   };
   const resolvedBinaryPath = opts.resolvedBinaryPaths[opts.agentType] ?? resolveValidatedBinaryPath(opts.agentType);
-  const modelForAgent = (() => {
+  const modelForAgent = opts.model ?? (() => {
     if (opts.agentType === "codex") {
       return process.env.OMC_EXTERNAL_MODELS_DEFAULT_CODEX_MODEL || process.env.OMC_CODEX_DEFAULT_MODEL || void 0;
     }
@@ -29019,21 +29704,61 @@ async function spawnV2Worker(opts) {
   }
   return {
     paneId,
-    startupAssigned: true
+    startupAssigned: true,
+    ...outputFile ? { outputFile } : {}
   };
 }
 async function startTeamV2(config2) {
   const sanitized = sanitizeTeamName(config2.teamName);
   const leaderCwd = (0, import_path88.resolve)(config2.cwd);
   validateTeamName(sanitized);
+  const pluginCfg = config2.pluginConfig ?? loadConfig();
+  const resolvedRouting = buildResolvedRoutingSnapshot(pluginCfg);
   const agentTypes = config2.agentTypes;
   const resolvedBinaryPaths = {};
+  const missingBinaryReasons = [];
   for (const agentType of [...new Set(agentTypes)]) {
-    resolvedBinaryPaths[agentType] = resolveValidatedBinaryPath(agentType);
+    try {
+      resolvedBinaryPaths[agentType] = resolveValidatedBinaryPath(agentType);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      missingBinaryReasons.push({ agentType, reason });
+    }
+  }
+  for (const { primary } of Object.values(resolvedRouting)) {
+    const provider = primary.provider;
+    if (resolvedBinaryPaths[provider]) continue;
+    if (missingBinaryReasons.some((m) => m.agentType === provider)) continue;
+    try {
+      resolvedBinaryPaths[provider] = resolveValidatedBinaryPath(provider);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      missingBinaryReasons.push({ agentType: provider, reason });
+    }
+  }
+  if (!resolvedBinaryPaths.claude) {
+    try {
+      resolvedBinaryPaths.claude = resolveValidatedBinaryPath("claude");
+    } catch {
+    }
   }
   await (0, import_promises13.mkdir)(absPath(leaderCwd, TeamPaths.tasks(sanitized)), { recursive: true });
   await (0, import_promises13.mkdir)(absPath(leaderCwd, TeamPaths.workers(sanitized)), { recursive: true });
   await (0, import_promises13.mkdir)((0, import_path88.join)(leaderCwd, ".omc", "state", "team", sanitized, "mailbox"), { recursive: true });
+  const missingBinaryLogFailure = createSwallowedErrorLogger(
+    "team.runtime-v2.startTeamV2 cli_binary_missing event failed"
+  );
+  for (const { agentType, reason } of missingBinaryReasons) {
+    process.stderr.write(
+      `[team/runtime-v2] cli_binary_missing:${agentType}: ${reason} \u2014 falling back to claude snapshot (AC-8)
+`
+    );
+    await appendTeamEvent(sanitized, {
+      type: "team_leader_nudge",
+      worker: "leader-fixed",
+      reason: `cli_binary_missing:${agentType}:${reason}`
+    }, leaderCwd).catch(missingBinaryLogFailure);
+  }
   for (let i = 0; i < config2.tasks.length; i++) {
     const taskId = String(i + 1);
     const taskFilePath2 = absPath(leaderCwd, TeamPaths.taskFile(sanitized, taskId));
@@ -29126,6 +29851,7 @@ async function startTeamV2(config2) {
     hud_pane_id: null,
     resize_hook_name: null,
     resize_hook_target: null,
+    resolved_routing: resolvedRouting,
     ...ownsWindow ? { workspace_mode: "single" } : {}
   };
   await saveTeamConfig(teamConfig, leaderCwd);
@@ -29175,6 +29901,14 @@ async function startTeamV2(config2) {
     const taskId = String(decision.taskIndex + 1);
     const task = config2.tasks[decision.taskIndex];
     if (!task || workerIndex < 0) continue;
+    const fallbackAgent = agentTypes[workerIndex % agentTypes.length] ?? agentTypes[0] ?? "claude";
+    const assignment = resolveTaskAssignment(
+      task,
+      resolvedRouting,
+      pluginCfg.team?.roleRouting,
+      resolvedBinaryPaths,
+      fallbackAgent
+    );
     const workerLaunch = await spawnV2Worker({
       sessionName: sessionName2,
       leaderPaneId,
@@ -29182,11 +29916,13 @@ async function startTeamV2(config2) {
       teamName: sanitized,
       workerName: wName,
       workerIndex,
-      agentType: agentTypes[workerIndex % agentTypes.length] ?? agentTypes[0] ?? "claude",
+      agentType: assignment.agentType,
       task,
       taskId,
       cwd: leaderCwd,
-      resolvedBinaryPaths
+      resolvedBinaryPaths,
+      ...assignment.model ? { model: assignment.model } : {},
+      ...assignment.role ? { role: assignment.role } : {}
     });
     if (workerLaunch.paneId) {
       workerPaneIds.push(workerLaunch.paneId);
@@ -29194,6 +29930,10 @@ async function startTeamV2(config2) {
       if (workerInfo) {
         workerInfo.pane_id = workerLaunch.paneId;
         workerInfo.assigned_tasks = workerLaunch.startupAssigned ? [taskId] : [];
+        workerInfo.worker_cli = assignment.agentType;
+        if (workerLaunch.outputFile) {
+          workerInfo.output_file = workerLaunch.outputFile;
+        }
       }
     }
     if (workerLaunch.startupFailureReason) {
@@ -29285,11 +30025,143 @@ async function requeueDeadWorkerTasks(teamName, deadWorkerNames, cwd2) {
   }
   return requeued;
 }
+async function processCliWorkerVerdicts(teamName, cwd2) {
+  const sanitized = sanitizeTeamName(teamName);
+  const config2 = await readTeamConfig(sanitized, cwd2);
+  if (!config2) return [];
+  const results = [];
+  const logEventFailure = createSwallowedErrorLogger(
+    "team.runtime-v2.processCliWorkerVerdicts appendTeamEvent failed"
+  );
+  const { rename: rename3 } = await import("fs/promises");
+  const { readFileSync: readFileSync90, writeFileSync: writeFileSync37, existsSync: fsExistsSync } = await import("fs");
+  const { withFileLockSync: withFileLockSync2 } = await Promise.resolve().then(() => (init_file_lock(), file_lock_exports));
+  for (const worker of config2.workers) {
+    const outputFile = worker.output_file;
+    if (!outputFile) continue;
+    const alive = await isWorkerPaneAlive(worker.pane_id);
+    if (alive) continue;
+    if (!fsExistsSync(outputFile)) {
+      results.push({ workerName: worker.name, taskId: null, status: "file_missing" });
+      continue;
+    }
+    let payload;
+    try {
+      const raw = await (0, import_promises13.readFile)(outputFile, "utf-8");
+      payload = parseCliWorkerVerdict(raw);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await appendTeamEvent(sanitized, {
+        type: "team_leader_nudge",
+        worker: "leader-fixed",
+        reason: `cli_worker_verdict_parse_failed:${worker.name}:${reason}`
+      }, cwd2).catch(logEventFailure);
+      results.push({ workerName: worker.name, taskId: null, status: "parse_failed", reason });
+      continue;
+    }
+    const candidateTaskIds = /* @__PURE__ */ new Set();
+    if (payload.task_id) candidateTaskIds.add(payload.task_id);
+    for (const id of worker.assigned_tasks ?? []) candidateTaskIds.add(id);
+    let targetTaskId = null;
+    let targetTaskPath = null;
+    for (const taskId of candidateTaskIds) {
+      const taskPath2 = absPath(cwd2, TeamPaths.taskFile(sanitized, taskId));
+      if (!fsExistsSync(taskPath2)) continue;
+      try {
+        const taskRaw = readFileSync90(taskPath2, "utf-8");
+        const taskData = JSON.parse(taskRaw);
+        if (taskData.owner === worker.name && taskData.status === "in_progress") {
+          targetTaskId = taskId;
+          targetTaskPath = taskPath2;
+          break;
+        }
+      } catch {
+      }
+    }
+    if (!targetTaskId || !targetTaskPath) {
+      await appendTeamEvent(sanitized, {
+        type: "team_leader_nudge",
+        worker: "leader-fixed",
+        reason: `cli_worker_verdict_no_in_progress_task:${worker.name}:verdict=${payload.verdict}`
+      }, cwd2).catch(logEventFailure);
+      results.push({
+        workerName: worker.name,
+        taskId: payload.task_id,
+        status: "no_in_progress_task",
+        verdict: payload.verdict
+      });
+      continue;
+    }
+    const terminalStatus = payload.verdict === "approve" ? "completed" : "failed";
+    let transitionOk = false;
+    try {
+      withFileLockSync2(targetTaskPath + ".lock", () => {
+        const raw = readFileSync90(targetTaskPath, "utf-8");
+        const taskData = JSON.parse(raw);
+        if (taskData.status !== "in_progress" || taskData.owner !== worker.name) {
+          return;
+        }
+        const prevMetadata = taskData.metadata && typeof taskData.metadata === "object" ? taskData.metadata : {};
+        taskData.status = terminalStatus;
+        taskData.completed_at = (/* @__PURE__ */ new Date()).toISOString();
+        taskData.claim = void 0;
+        taskData.metadata = {
+          ...prevMetadata,
+          verdict: payload.verdict,
+          verdict_summary: payload.summary,
+          verdict_findings: payload.findings,
+          verdict_role: payload.role,
+          verdict_source: "cli_worker_output_contract"
+        };
+        if (terminalStatus === "failed") {
+          taskData.error = `cli_worker_verdict:${payload.verdict}:${payload.summary}`;
+        }
+        writeFileSync37(targetTaskPath, JSON.stringify(taskData, null, 2), "utf-8");
+        transitionOk = true;
+      });
+    } catch {
+    }
+    if (!transitionOk) {
+      results.push({
+        workerName: worker.name,
+        taskId: targetTaskId,
+        status: "already_terminal",
+        verdict: payload.verdict
+      });
+      continue;
+    }
+    await appendTeamEvent(sanitized, {
+      type: terminalStatus === "completed" ? "task_completed" : "task_failed",
+      worker: worker.name,
+      task_id: targetTaskId,
+      reason: `cli_worker_verdict:${payload.verdict}`
+    }, cwd2).catch(logEventFailure);
+    try {
+      await rename3(outputFile, outputFile + ".processed");
+    } catch {
+    }
+    results.push({
+      workerName: worker.name,
+      taskId: targetTaskId,
+      status: terminalStatus,
+      verdict: payload.verdict
+    });
+  }
+  return results;
+}
 async function monitorTeamV2(teamName, cwd2) {
   const monitorStartMs = import_perf_hooks.performance.now();
   const sanitized = sanitizeTeamName(teamName);
   const config2 = await readTeamConfig(sanitized, cwd2);
   if (!config2) return null;
+  try {
+    await processCliWorkerVerdicts(sanitized, cwd2);
+  } catch (err) {
+    process.stderr.write(
+      `[team/runtime-v2] processCliWorkerVerdicts failed: ${err instanceof Error ? err.message : String(err)}
+`
+    );
+  }
   const previousSnapshot = await readMonitorSnapshot(sanitized, cwd2);
   const listTasksStartMs = import_perf_hooks.performance.now();
   const allTasks = await listTasksFromFiles(sanitized, cwd2);
@@ -29650,6 +30522,12 @@ var init_runtime_v2 = __esm({
     init_git_worktree();
     init_omc_cli_rendering();
     init_swallowed_error();
+    init_types();
+    init_loader();
+    init_stage_router();
+    init_role_router();
+    init_types2();
+    init_cli_worker_contract();
     MONITOR_SIGNAL_STALE_MS = 3e4;
     CIRCUIT_BREAKER_THRESHOLD = 3;
     CircuitBreakerV2 = class {
@@ -38363,9 +39241,9 @@ function parseUsageResponse(response) {
 function parseZaiResponse(response) {
   const limits = response.data?.limits;
   if (!limits || limits.length === 0) return null;
-  const tokensLimit = limits.find((l) => l.type === "TOKENS_LIMIT");
+  const allTokensLimits = limits.filter((l) => l.type === "TOKENS_LIMIT");
   const timeLimit = limits.find((l) => l.type === "TIME_LIMIT");
-  if (!tokensLimit && !timeLimit) return null;
+  if (allTokensLimits.length === 0 && !timeLimit) return null;
   const parseResetTime = (timestamp) => {
     if (!timestamp) return null;
     try {
@@ -38375,13 +39253,39 @@ function parseZaiResponse(response) {
       return null;
     }
   };
-  return {
-    fiveHourPercent: clamp(tokensLimit?.percentage),
-    fiveHourResetsAt: parseResetTime(tokensLimit?.nextResetTime),
-    // z.ai has no weekly quota; leave weeklyPercent undefined so HUD hides it
+  const sortByResetTime = (a, b) => {
+    const aTime = a.nextResetTime && a.nextResetTime > 0 ? a.nextResetTime : Infinity;
+    const bTime = b.nextResetTime && b.nextResetTime > 0 ? b.nextResetTime : Infinity;
+    if (aTime !== bTime) return aTime - bTime;
+    return (a.percentage ?? 0) - (b.percentage ?? 0);
+  };
+  const weeklyByUnit = allTokensLimits.find((l) => l.unit === ZAI_UNIT_WEEK);
+  let fiveHourBucket;
+  let weeklyBucket;
+  if (weeklyByUnit) {
+    weeklyBucket = weeklyByUnit;
+    fiveHourBucket = allTokensLimits.filter((l) => l.unit !== ZAI_UNIT_WEEK).slice().sort(sortByResetTime)[0];
+  } else {
+    const sorted = allTokensLimits.slice().sort(sortByResetTime);
+    fiveHourBucket = sorted[0];
+    weeklyBucket = sorted[1];
+  }
+  if (allTokensLimits.length > 2 && process.env.OMC_DEBUG) {
+    console.error(
+      `[usage-api] z.ai returned ${allTokensLimits.length} TOKENS_LIMIT entries; using unit-based classification`
+    );
+  }
+  const result = {
+    fiveHourPercent: clamp(fiveHourBucket?.percentage),
+    fiveHourResetsAt: parseResetTime(fiveHourBucket?.nextResetTime),
     monthlyPercent: timeLimit ? clamp(timeLimit.percentage) : void 0,
     monthlyResetsAt: timeLimit ? parseResetTime(timeLimit.nextResetTime) ?? null : void 0
   };
+  if (weeklyBucket) {
+    result.weeklyPercent = clamp(weeklyBucket.percentage);
+    result.weeklyResetsAt = parseResetTime(weeklyBucket.nextResetTime);
+  }
+  return result;
 }
 function fetchUsageFromMinimax(apiKey) {
   return new Promise((resolve20) => {
@@ -38460,10 +39364,10 @@ function parseMinimaxResponse(response) {
     return null;
   }
   const intervalTotal = codingModel.current_interval_total_count;
-  const intervalUsed = codingModel.current_interval_usage_count;
+  const intervalUsed = intervalTotal - codingModel.current_interval_usage_count;
   const intervalPercent = intervalTotal > 0 ? intervalUsed / intervalTotal * 100 : 0;
   const weeklyTotal = codingModel.current_weekly_total_count;
-  const weeklyUsed = codingModel.current_weekly_usage_count;
+  const weeklyUsed = weeklyTotal - codingModel.current_weekly_usage_count;
   const weeklyPercent = weeklyTotal > 0 ? weeklyUsed / weeklyTotal * 100 : 0;
   const parseResetTime = (timestamp) => {
     if (!timestamp) return null;
@@ -38603,7 +39507,7 @@ async function getUsage() {
     return { rateLimits: null, error: "network" };
   }
 }
-var import_fs92, import_path112, import_child_process26, import_crypto18, import_os18, import_https3, CACHE_TTL_FAILURE_MS, CACHE_TTL_TRANSIENT_NETWORK_MS, MAX_RATE_LIMITED_BACKOFF_MS, API_TIMEOUT_MS2, MAX_STALE_DATA_MS, TOKEN_REFRESH_URL_HOSTNAME, USAGE_CACHE_LOCK_OPTS, TOKEN_REFRESH_URL_PATH, DEFAULT_OAUTH_CLIENT_ID;
+var import_fs92, import_path112, import_child_process26, import_crypto18, import_os18, import_https3, CACHE_TTL_FAILURE_MS, CACHE_TTL_TRANSIENT_NETWORK_MS, MAX_RATE_LIMITED_BACKOFF_MS, API_TIMEOUT_MS2, MAX_STALE_DATA_MS, TOKEN_REFRESH_URL_HOSTNAME, USAGE_CACHE_LOCK_OPTS, TOKEN_REFRESH_URL_PATH, DEFAULT_OAUTH_CLIENT_ID, ZAI_UNIT_WEEK;
 var init_usage_api = __esm({
   "src/hud/usage-api.ts"() {
     "use strict";
@@ -38615,7 +39519,7 @@ var init_usage_api = __esm({
     import_os18 = require("os");
     import_https3 = __toESM(require("https"), 1);
     init_ssrf_guard();
-    init_types2();
+    init_types4();
     init_state2();
     init_file_lock();
     CACHE_TTL_FAILURE_MS = 15 * 1e3;
@@ -38627,6 +39531,7 @@ var init_usage_api = __esm({
     USAGE_CACHE_LOCK_OPTS = { staleLockMs: API_TIMEOUT_MS2 + 5e3 };
     TOKEN_REFRESH_URL_PATH = "/v1/oauth/token";
     DEFAULT_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+    ZAI_UNIT_WEEK = 6;
   }
 });
 
@@ -39462,7 +40367,7 @@ function isCacheValid2(cache) {
 function spawnWithTimeout(cmd, timeoutMs) {
   return new Promise((resolve20, reject) => {
     const [executable, ...args] = Array.isArray(cmd) ? cmd : ["sh", "-c", cmd];
-    const child = (0, import_child_process37.spawn)(executable, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = (0, import_child_process38.spawn)(executable, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
@@ -39550,11 +40455,11 @@ async function executeCustomProvider(config2) {
     return { buckets: [], stale: false, error: "command failed" };
   }
 }
-var import_child_process37, import_fs108, import_path127, CACHE_TTL_MS2, DEFAULT_TIMEOUT_MS2;
+var import_child_process38, import_fs108, import_path127, CACHE_TTL_MS2, DEFAULT_TIMEOUT_MS2;
 var init_custom_rate_provider = __esm({
   "src/hud/custom-rate-provider.ts"() {
     "use strict";
-    import_child_process37 = require("child_process");
+    import_child_process38 = require("child_process");
     import_fs108 = require("fs");
     import_path127 = require("path");
     init_config_dir();
@@ -41356,7 +42261,7 @@ var ANSI_REGEX, PLAIN_SEPARATOR, DIM_SEPARATOR;
 var init_render = __esm({
   "src/hud/render.ts"() {
     "use strict";
-    init_types2();
+    init_types4();
     init_colors();
     init_string_width();
     init_ralph2();
@@ -41471,7 +42376,7 @@ function spawnSessionSummaryScript(transcriptPath, stateDir, sessionId) {
     return;
   }
   try {
-    const child = (0, import_child_process38.spawn)(
+    const child = (0, import_child_process39.spawn)(
       "node",
       [scriptPath, transcriptPath, stateDir, sessionId],
       {
@@ -41730,7 +42635,7 @@ async function main2(watchMode = false, skipInit = false) {
     }
   }
 }
-var import_fs110, import_promises21, import_path129, import_os23, import_child_process38, import_url16, lastSummarySpawnTimestamp, summaryProcessPid;
+var import_fs110, import_promises21, import_path129, import_os23, import_child_process39, import_url16, lastSummarySpawnTimestamp, summaryProcessPid;
 var init_hud = __esm({
   "src/hud/index.ts"() {
     "use strict";
@@ -41751,7 +42656,7 @@ var init_hud = __esm({
     import_promises21 = require("fs/promises");
     import_path129 = require("path");
     import_os23 = require("os");
-    import_child_process38 = require("child_process");
+    import_child_process39 = require("child_process");
     import_url16 = require("url");
     init_worktree_paths();
     init_config_dir();
@@ -75691,6 +76596,9 @@ var allCustomTools = [
 // src/index.ts
 init_auto_update();
 
+// src/shared/index.ts
+init_types();
+
 // src/hooks/task-size-detector/index.ts
 var DEFAULT_THRESHOLDS = {
   smallWordLimit: 50,
@@ -75875,12 +76783,116 @@ function removeCodeBlocks2(text) {
   result = result.replace(/`[^`]+`/g, "");
   return result;
 }
+var PASTED_MAGIC_KEYWORD_HEADER_PATTERN = /^\s*\[MAGIC KEYWORDS?(?: DETECTED)?:.*$/i;
+var ROLE_BOUNDARY_PATTERN = /^<\s*\/?\s*(system|human|assistant|user|tool_use|tool_result)\b[^>]*>/i;
+var SKILL_TRANSCRIPT_LINE_PATTERN = /^\s*Skill:\s+oh-my-(?:claudecode|codex):/i;
+var USER_REQUEST_LINE_PATTERN = /^\s*User request:\s*$/i;
+var SHELL_TRANSCRIPT_LINE_PATTERN = /^\s*[$%❯]\s+/;
+var GIT_DIFF_START_PATTERNS = [
+  /^diff\s+--git\s+a\//,
+  /^index\s+[0-9a-f]+\.\.[0-9a-f]+(?:\s+\d+)?$/i,
+  /^(?:---|\+\+\+)\s+[ab]\//,
+  /^@@\s+-\d+/
+];
+var GIT_DIFF_CONTINUATION_PATTERNS = [
+  /^new file mode\s+\d+$/i,
+  /^deleted file mode\s+\d+$/i,
+  /^similarity index\s+\d+%$/i,
+  /^rename (?:from|to)\s+/i,
+  /^Binary files .+ differ$/i,
+  /^(?:diff\s+--git\s+a\/|index\s+[0-9a-f]+\.\.[0-9a-f]+|(?:---|\+\+\+)\s+[ab]\/|@@\s+-\d+)/i,
+  /^[ +\-].*/
+];
+function stripPastedCommandPayloads(text) {
+  const lines = text.split("\n");
+  const sanitized = [];
+  let insideRoleBlock = false;
+  let insideDiffBlock = false;
+  let insideMagicKeywordBlock = false;
+  let magicBlockSawUserRequest = false;
+  let magicBlockSawRequestPayload = false;
+  let previousLineWasUserRequest = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (insideMagicKeywordBlock) {
+      if (ROLE_BOUNDARY_PATTERN.test(trimmed)) {
+        insideRoleBlock = !/^<\s*\//.test(trimmed);
+        insideMagicKeywordBlock = false;
+        magicBlockSawUserRequest = false;
+        magicBlockSawRequestPayload = false;
+        continue;
+      }
+      if (USER_REQUEST_LINE_PATTERN.test(line)) {
+        magicBlockSawUserRequest = true;
+        magicBlockSawRequestPayload = false;
+        continue;
+      }
+      if (magicBlockSawUserRequest) {
+        if (trimmed) {
+          magicBlockSawRequestPayload = true;
+          continue;
+        }
+        if (magicBlockSawRequestPayload) {
+          insideMagicKeywordBlock = false;
+          magicBlockSawUserRequest = false;
+          magicBlockSawRequestPayload = false;
+          sanitized.push(line);
+          continue;
+        }
+      }
+      continue;
+    }
+    if (PASTED_MAGIC_KEYWORD_HEADER_PATTERN.test(line)) {
+      insideMagicKeywordBlock = true;
+      magicBlockSawUserRequest = false;
+      magicBlockSawRequestPayload = false;
+      continue;
+    }
+    if (ROLE_BOUNDARY_PATTERN.test(trimmed)) {
+      insideRoleBlock = !/^<\s*\//.test(trimmed);
+      continue;
+    }
+    if (insideRoleBlock) {
+      continue;
+    }
+    if (!trimmed) {
+      sanitized.push(line);
+      insideDiffBlock = false;
+      previousLineWasUserRequest = false;
+      continue;
+    }
+    if (previousLineWasUserRequest) {
+      previousLineWasUserRequest = false;
+      continue;
+    }
+    if (USER_REQUEST_LINE_PATTERN.test(line) || SKILL_TRANSCRIPT_LINE_PATTERN.test(line)) {
+      previousLineWasUserRequest = USER_REQUEST_LINE_PATTERN.test(line);
+      continue;
+    }
+    if (SHELL_TRANSCRIPT_LINE_PATTERN.test(line) && !/^\s*\$\w/.test(line)) {
+      continue;
+    }
+    if (insideDiffBlock) {
+      if (GIT_DIFF_CONTINUATION_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+        continue;
+      }
+      insideDiffBlock = false;
+    }
+    if (GIT_DIFF_START_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+      insideDiffBlock = true;
+      continue;
+    }
+    sanitized.push(line);
+  }
+  return sanitized.join("\n");
+}
 var NON_LATIN_SCRIPT_PATTERN = (
   // eslint-disable-next-line no-misleading-character-class -- Intentional: detecting script presence, not matching grapheme clusters
   /[\u3000-\u9FFF\uAC00-\uD7AF\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u0E00-\u0E7F\u1000-\u109F]/u
 );
 function sanitizeForKeywordDetection(text) {
-  let result = text.replace(/<!--[\s\S]*?-->/g, "");
+  let result = stripPastedCommandPayloads(text);
+  result = result.replace(/<!--[\s\S]*?-->/g, "");
   result = result.replace(/<(\w[\w-]*)[\s>][\s\S]*?<\/\1>/g, "");
   result = result.replace(/<\w[\w-]*(?:\s[^>]*)?\s*\/>/g, "");
   result = result.replace(/https?:\/\/\S+/g, "");
@@ -79447,7 +80459,11 @@ function applyDeepInterviewRuntimeSettings(template) {
   ).replace('"threshold": 0.2,', `"threshold": ${threshold},`).replace(
     "We'll proceed to execution once ambiguity drops below 20%.",
     `We'll proceed to execution once ambiguity drops below ${percent}.`
-  ).replace("(default: 20%)", `(default: ${percent})`).replace("(default 0.2)", `(default ${threshold})`).replace("Gate: \u226420% ambiguity", `Gate: \u2264${percent} ambiguity`).replace("(threshold: 20%).", `(threshold: ${percent}).`).replace("ambiguity \u2264 20%", `ambiguity \u2264 ${percent}`);
+  ).replace("(default: 20%)", `(default: ${percent})`).replace("(default 0.2)", `(default ${threshold})`).replace('"ambiguityThreshold": 0.2,', `"ambiguityThreshold": ${threshold},`).replace("Gate: \u226420% ambiguity", `Gate: \u2264${percent} ambiguity`).replace("(threshold: 20%).", `(threshold: ${percent}).`).replace("ambiguity \u2264 20%", `ambiguity \u2264 ${percent}`);
+}
+function renderBundledSkillBody(skillName, body) {
+  const rewrittenBody = rewriteOmcCliInvocations(body.trim());
+  return skillName === "deep-interview" ? applyDeepInterviewRuntimeSettings(rewrittenBody) : rewrittenBody;
 }
 function loadSkillFromFile(skillPath, skillName) {
   try {
@@ -79456,7 +80472,7 @@ function loadSkillFromFile(skillPath, skillName) {
     const resolvedName = metadata.name || skillName;
     const safePrimaryName = toSafeSkillName(resolvedName);
     const pipeline = parseSkillPipelineMetadata(metadata);
-    const renderedBody = safePrimaryName === "deep-interview" ? applyDeepInterviewRuntimeSettings(rewriteOmcCliInvocations(body.trim())) : rewriteOmcCliInvocations(body.trim());
+    const renderedBody = renderBundledSkillBody(safePrimaryName, body);
     const template = [
       renderedBody,
       renderSkillRuntimeGuidance(safePrimaryName),
@@ -81045,6 +82061,92 @@ async function doctorConflictsCommand(options) {
   return report.hasConflicts ? 1 : 0;
 }
 
+// src/cli/commands/doctor-team-routing.ts
+var import_child_process28 = require("child_process");
+init_formatting();
+init_loader();
+var PROVIDER_BINARY = {
+  claude: "claude",
+  codex: "codex",
+  gemini: "gemini"
+};
+function probeProvider(provider) {
+  const binary = PROVIDER_BINARY[provider];
+  const probe = { provider, binary, found: false };
+  try {
+    const resolved = (0, import_child_process28.execSync)(`command -v ${binary}`, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    if (resolved) {
+      probe.found = true;
+      probe.path = resolved;
+      try {
+        const version3 = (0, import_child_process28.execSync)(`${binary} --version`, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 }).trim().split("\n")[0];
+        if (version3) probe.version = version3;
+      } catch {
+      }
+    }
+  } catch (err) {
+    probe.error = err instanceof Error ? err.message : String(err);
+  }
+  return probe;
+}
+function collectConfiguredProviders() {
+  const cfg = loadConfig();
+  const providers = /* @__PURE__ */ new Set();
+  providers.add("claude");
+  const roleRouting = cfg.team?.roleRouting ?? {};
+  for (const spec of Object.values(roleRouting)) {
+    const provider = spec?.provider;
+    if (provider === "claude" || provider === "codex" || provider === "gemini") {
+      providers.add(provider);
+    }
+  }
+  return providers;
+}
+async function doctorTeamRoutingCommand(options) {
+  let providers;
+  try {
+    providers = collectConfiguredProviders();
+  } catch (err) {
+    console.error(`[OMC] Failed to load config: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  const probes = [...providers].map(probeProvider);
+  const missing = probes.filter((p) => !p.found);
+  if (options.json) {
+    console.log(
+      JSON.stringify(
+        {
+          probes,
+          missing: missing.map((p) => p.provider)
+        },
+        null,
+        2
+      )
+    );
+  } else {
+    console.log(colors.bold("Team role routing \u2014 provider CLI probe"));
+    for (const p of probes) {
+      if (p.found) {
+        const version3 = p.version ? ` (${p.version})` : "";
+        console.log(`  ${colors.green("\u2713")} ${p.provider}: ${p.path}${version3}`);
+      } else {
+        console.log(`  ${colors.yellow("\u26A0")} ${p.provider}: not found on PATH \u2014 /team tasks routed to ${p.provider} will fall back to claude`);
+      }
+    }
+    if (missing.length === 0) {
+      console.log(colors.green("\nAll configured providers are available."));
+    } else {
+      console.log(
+        colors.yellow(
+          `
+${missing.length} provider${missing.length === 1 ? "" : "s"} missing (warn only \u2014 /team falls back to claude).`
+        )
+      );
+    }
+  }
+  return 0;
+}
+
 // src/cli/commands/session-search.ts
 function formatTimestamp(timestamp) {
   if (!timestamp) return "unknown time";
@@ -81813,10 +82915,12 @@ async function executeTeamApiOperation(operation, args, fallbackCwd) {
 }
 
 // src/cli/commands/team.ts
+init_loader();
 var HELP_TOKENS = /* @__PURE__ */ new Set(["--help", "-h", "help"]);
 var MIN_WORKER_COUNT = 1;
 var MAX_WORKER_COUNT = 20;
 var VALID_TEAM_CLI_AGENT_TYPES = /* @__PURE__ */ new Set(["claude", "codex", "gemini"]);
+var DEFAULT_TEAM_CLI_AGENT_TYPE = "claude";
 var TEAM_HELP = `
 Usage: omc team [N:agent-type[:role]] [--new-window] "<task description>"
        omc team status <team-name>
@@ -82009,13 +83113,14 @@ function normalizeWorkerSpecSegment(match) {
   }
   return { count, agentType: "claude", role: token };
 }
-function parseTeamArgs(tokens) {
+function parseTeamArgs(tokens, defaultAgentType = "claude") {
   const args = [...tokens];
   let workerCount = 3;
   let agentTypes = [];
   let workerSpecs = [];
   let json = false;
   let newWindow = false;
+  const normalizedDefaultAgentType = VALID_TEAM_CLI_AGENT_TYPES.has(defaultAgentType) ? defaultAgentType : DEFAULT_TEAM_CLI_AGENT_TYPE;
   const filteredArgs = [];
   for (const arg of args) {
     if (arg === "--json") {
@@ -82075,8 +83180,8 @@ function parseTeamArgs(tokens) {
     }
   }
   if (agentTypes.length === 0) {
-    agentTypes = Array.from({ length: workerCount }, () => "claude");
-    workerSpecs = Array.from({ length: workerCount }, () => ({ agentType: "claude" }));
+    agentTypes = Array.from({ length: workerCount }, () => normalizedDefaultAgentType);
+    workerSpecs = Array.from({ length: workerCount }, () => ({ agentType: normalizedDefaultAgentType }));
   }
   const task = filteredArgs.join(" ").trim();
   if (!task) {
@@ -82479,7 +83584,9 @@ async function teamCommand(args) {
     return;
   }
   try {
-    const parsed = parseTeamArgs(args);
+    const cfg = loadConfig();
+    const defaultAgentType = cfg.team?.ops?.defaultAgentType ?? DEFAULT_TEAM_CLI_AGENT_TYPE;
+    const parsed = parseTeamArgs(args, defaultAgentType);
     await handleTeamStart(parsed, cwd2);
   } catch (error2) {
     console.error(error2 instanceof Error ? error2.message : String(error2));
@@ -83374,7 +84481,7 @@ function sleep5(ms) {
 }
 
 // src/cli/commands/teleport.ts
-var import_child_process28 = require("child_process");
+var import_child_process29 = require("child_process");
 var import_fs97 = require("fs");
 var import_os19 = require("os");
 var import_path116 = require("path");
@@ -83429,7 +84536,7 @@ function installDependencies(worktreePath, packageManager) {
     pnpm: ["install"],
     yarn: ["install"]
   };
-  (0, import_child_process28.execFileSync)(packageManager, argsByManager[packageManager], {
+  (0, import_child_process29.execFileSync)(packageManager, argsByManager[packageManager], {
     cwd: worktreePath,
     stdio: "inherit"
   });
@@ -83607,8 +84714,8 @@ function sanitize(str, maxLen = 30) {
 }
 function getCurrentRepo() {
   try {
-    const root2 = (0, import_child_process28.execSync)("git rev-parse --show-toplevel", { encoding: "utf-8", timeout: 5e3 }).trim();
-    const remoteUrl = (0, import_child_process28.execSync)("git remote get-url origin", { encoding: "utf-8", timeout: 5e3 }).trim();
+    const root2 = (0, import_child_process29.execSync)("git rev-parse --show-toplevel", { encoding: "utf-8", timeout: 5e3 }).trim();
+    const remoteUrl = (0, import_child_process29.execSync)("git remote get-url origin", { encoding: "utf-8", timeout: 5e3 }).trim();
     const parsed = parseRemoteUrl(remoteUrl);
     if (parsed) {
       return { owner: parsed.owner, repo: parsed.repo, root: root2, provider: parsed.provider };
@@ -83634,18 +84741,18 @@ function createWorktree(repoRoot, worktreePath, branchName, baseBranch) {
     if ((0, import_fs97.existsSync)(worktreePath)) {
       return { success: false, error: `Worktree already exists at ${worktreePath}` };
     }
-    (0, import_child_process28.execFileSync)("git", ["fetch", "origin", baseBranch], {
+    (0, import_child_process29.execFileSync)("git", ["fetch", "origin", baseBranch], {
       cwd: repoRoot,
       stdio: "pipe"
     });
     try {
-      (0, import_child_process28.execFileSync)("git", ["branch", branchName, `origin/${baseBranch}`], {
+      (0, import_child_process29.execFileSync)("git", ["branch", branchName, `origin/${baseBranch}`], {
         cwd: repoRoot,
         stdio: "pipe"
       });
     } catch {
     }
-    (0, import_child_process28.execFileSync)("git", ["worktree", "add", worktreePath, branchName], {
+    (0, import_child_process29.execFileSync)("git", ["worktree", "add", worktreePath, branchName], {
       cwd: repoRoot,
       stdio: "pipe"
     });
@@ -83724,7 +84831,7 @@ async function teleportCommand(ref, options) {
       if (provider.prRefspec) {
         try {
           const refspec = provider.prRefspec.replace("{number}", String(parsed.number)).replace("{branch}", branchName);
-          (0, import_child_process28.execFileSync)(
+          (0, import_child_process29.execFileSync)(
             "git",
             ["fetch", "origin", refspec],
             { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"], timeout: 3e4 }
@@ -83733,7 +84840,7 @@ async function teleportCommand(ref, options) {
         }
       } else if (info.branch) {
         try {
-          (0, import_child_process28.execFileSync)(
+          (0, import_child_process29.execFileSync)(
             "git",
             ["fetch", "origin", `${info.branch}:${branchName}`],
             { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"], timeout: 3e4 }
@@ -83836,7 +84943,7 @@ async function teleportListCommand(options) {
     const relativePath = (0, import_path116.relative)(worktreeRoot, worktreePath);
     let branch = "unknown";
     try {
-      branch = (0, import_child_process28.execSync)("git branch --show-current", {
+      branch = (0, import_child_process29.execSync)("git branch --show-current", {
         cwd: worktreePath,
         encoding: "utf-8"
       }).trim();
@@ -83888,7 +84995,7 @@ async function teleportRemoveCommand(pathOrName, options) {
   }
   try {
     if (!options.force) {
-      const status = (0, import_child_process28.execSync)("git status --porcelain", {
+      const status = (0, import_child_process29.execSync)("git status --porcelain", {
         cwd: worktreePath,
         encoding: "utf-8"
       });
@@ -83902,7 +85009,7 @@ async function teleportRemoveCommand(pathOrName, options) {
         return 1;
       }
     }
-    const gitDir = (0, import_child_process28.execSync)("git rev-parse --git-dir", {
+    const gitDir = (0, import_child_process29.execSync)("git rev-parse --git-dir", {
       cwd: worktreePath,
       encoding: "utf-8"
     }).trim();
@@ -83910,7 +85017,7 @@ async function teleportRemoveCommand(pathOrName, options) {
     const mainRepo = mainRepoMatch ? mainRepoMatch[1] : null;
     if (mainRepo) {
       const args = options.force ? ["worktree", "remove", "--force", worktreePath] : ["worktree", "remove", worktreePath];
-      (0, import_child_process28.execFileSync)("git", args, {
+      (0, import_child_process29.execFileSync)("git", args, {
         cwd: mainRepo,
         stdio: "pipe"
       });
@@ -83947,7 +85054,7 @@ function resolvePluginDirArg(rawPath) {
 }
 
 // src/cli/launch.ts
-var import_child_process29 = require("child_process");
+var import_child_process30 = require("child_process");
 var import_fs98 = require("fs");
 var import_os20 = require("os");
 var import_path118 = require("path");
@@ -84204,7 +85311,7 @@ function runClaudeInsideTmux(cwd2, args) {
   } catch {
   }
   try {
-    (0, import_child_process29.execFileSync)("claude", args, { cwd: cwd2, stdio: "inherit" });
+    (0, import_child_process30.execFileSync)("claude", args, { cwd: cwd2, stdio: "inherit" });
   } catch (error2) {
     const err = error2;
     if (err.code === "ENOENT") {
@@ -84262,7 +85369,7 @@ function runClaudeOutsideTmux(cwd2, args, _sessionId) {
 }
 function runClaudeDirect(cwd2, args) {
   try {
-    (0, import_child_process29.execFileSync)("claude", args, { cwd: cwd2, stdio: "inherit" });
+    (0, import_child_process30.execFileSync)("claude", args, { cwd: cwd2, stdio: "inherit" });
   } catch (error2) {
     const err = error2;
     if (err.code === "ENOENT") {
@@ -84361,7 +85468,7 @@ async function launchCommand(args) {
 }
 
 // src/cli/interop.ts
-var import_child_process30 = require("child_process");
+var import_child_process31 = require("child_process");
 var import_crypto19 = require("crypto");
 init_tmux_utils();
 function readInteropRuntimeFlags(env2 = process.env) {
@@ -84385,7 +85492,7 @@ function validateInteropRuntimeFlags(flags) {
 }
 function isCodexAvailable() {
   try {
-    (0, import_child_process30.execFileSync)("codex", ["--version"], { stdio: "ignore" });
+    (0, import_child_process31.execFileSync)("codex", ["--version"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -84475,7 +85582,7 @@ function interopCommand(options = {}) {
 }
 
 // src/cli/ask.ts
-var import_child_process31 = require("child_process");
+var import_child_process32 = require("child_process");
 var import_fs99 = require("fs");
 var import_promises15 = require("fs/promises");
 var import_os21 = require("os");
@@ -84653,7 +85760,7 @@ async function askCommand(args) {
 
 ${parsed.prompt}`;
   }
-  const child = (0, import_child_process31.spawnSync)(
+  const child = (0, import_child_process32.spawnSync)(
     process.execPath,
     [advisorScriptPath, parsed.provider, finalPrompt],
     {
@@ -84693,11 +85800,11 @@ function warnIfWin32() {
 }
 
 // src/cli/autoresearch.ts
-var import_child_process36 = require("child_process");
+var import_child_process37 = require("child_process");
 var import_fs104 = require("fs");
 
 // src/autoresearch/contracts.ts
-var import_child_process32 = require("child_process");
+var import_child_process33 = require("child_process");
 var import_fs100 = require("fs");
 var import_promises16 = require("fs/promises");
 var import_path120 = require("path");
@@ -84706,7 +85813,7 @@ function contractError(message) {
 }
 function readGit(repoPath, args) {
   try {
-    return (0, import_child_process32.execFileSync)("git", args, {
+    return (0, import_child_process33.execFileSync)("git", args, {
       cwd: repoPath,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"]
@@ -84868,7 +85975,7 @@ async function loadAutoresearchMissionContract(missionDirArg) {
 }
 
 // src/autoresearch/runtime.ts
-var import_child_process33 = require("child_process");
+var import_child_process34 = require("child_process");
 var import_fs101 = require("fs");
 var import_promises17 = require("fs/promises");
 var import_path121 = require("path");
@@ -84896,7 +86003,7 @@ function trimContent(value, max = 4e3) {
 }
 function readGit2(repoPath, args) {
   try {
-    return (0, import_child_process33.execFileSync)("git", args, {
+    return (0, import_child_process34.execFileSync)("git", args, {
       cwd: repoPath,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"]
@@ -84908,7 +86015,7 @@ function readGit2(repoPath, args) {
   }
 }
 function tryResolveGitCommit(worktreePath, ref) {
-  const result = (0, import_child_process33.spawnSync)("git", ["rev-parse", "--verify", `${ref}^{commit}`], {
+  const result = (0, import_child_process34.spawnSync)("git", ["rev-parse", "--verify", `${ref}^{commit}`], {
     cwd: worktreePath,
     encoding: "utf-8"
   });
@@ -84946,7 +86053,7 @@ function readGitFullHead(worktreePath) {
   return readGit2(worktreePath, ["rev-parse", "HEAD"]);
 }
 function requireGitSuccess(worktreePath, args) {
-  const result = (0, import_child_process33.spawnSync)("git", args, {
+  const result = (0, import_child_process34.spawnSync)("git", args, {
     cwd: worktreePath,
     encoding: "utf-8"
   });
@@ -84954,7 +86061,7 @@ function requireGitSuccess(worktreePath, args) {
   throw new Error((result.stderr || "").trim() || `git ${args.join(" ")} failed`);
 }
 function gitStatusLines(worktreePath) {
-  const result = (0, import_child_process33.spawnSync)("git", ["status", "--porcelain", "--untracked-files=all"], {
+  const result = (0, import_child_process34.spawnSync)("git", ["status", "--porcelain", "--untracked-files=all"], {
     cwd: worktreePath,
     encoding: "utf-8"
   });
@@ -85137,7 +86244,7 @@ async function buildAutoresearchInstructionContext(manifest) {
 }
 async function runAutoresearchEvaluator(contract, worktreePath, ledgerFile, latestEvaluatorFile) {
   const ran_at = nowIso();
-  const result = (0, import_child_process33.spawnSync)(contract.sandbox.evaluator.command, {
+  const result = (0, import_child_process34.spawnSync)(contract.sandbox.evaluator.command, {
     cwd: worktreePath,
     encoding: "utf-8",
     shell: true,
@@ -85902,7 +87009,7 @@ async function finalizeAutoresearchRunState(projectRoot, runId, updates) {
 }
 
 // src/cli/autoresearch-guided.ts
-var import_child_process35 = require("child_process");
+var import_child_process36 = require("child_process");
 var import_fs103 = require("fs");
 var import_promises19 = require("fs/promises");
 var import_path123 = require("path");
@@ -86070,7 +87177,7 @@ async function writeAutoresearchDeepInterviewArtifacts(input) {
 }
 
 // src/cli/autoresearch-setup-session.ts
-var import_child_process34 = require("child_process");
+var import_child_process35 = require("child_process");
 var import_fs102 = require("fs");
 var import_path122 = require("path");
 
@@ -86228,7 +87335,7 @@ function checkTmuxAvailable() {
   return isTmuxAvailable();
 }
 function resolveMissionRepoRoot(missionDir) {
-  return (0, import_child_process35.execFileSync)("git", ["rev-parse", "--show-toplevel"], {
+  return (0, import_child_process36.execFileSync)("git", ["rev-parse", "--show-toplevel"], {
     cwd: missionDir,
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"]
@@ -86385,7 +87492,7 @@ function normalizeAutoresearchClaudeArgs(claudeArgs) {
 function runAutoresearchTurn(worktreePath, instructionsFile, claudeArgs) {
   const prompt = (0, import_fs104.readFileSync)(instructionsFile, "utf-8");
   const launchArgs = ["--print", ...normalizeAutoresearchClaudeArgs(claudeArgs), "-p", prompt];
-  const result = (0, import_child_process36.spawnSync)("claude", launchArgs, {
+  const result = (0, import_child_process37.spawnSync)("claude", launchArgs, {
     cwd: worktreePath,
     stdio: ["pipe", "inherit", "inherit"],
     encoding: "utf-8",
@@ -86501,7 +87608,7 @@ ${AUTORESEARCH_HELP}`
   };
 }
 function resolveRepoRoot(cwd2) {
-  return (0, import_child_process36.execFileSync)("git", ["rev-parse", "--show-toplevel"], {
+  return (0, import_child_process37.execFileSync)("git", ["rev-parse", "--show-toplevel"], {
     cwd: cwd2,
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"]
@@ -86558,7 +87665,7 @@ async function runAutoresearchLoop(claudeArgs, runtime, missionDir) {
     while (true) {
       runAutoresearchTurn(runtime.worktreePath, runtime.instructionsFile, claudeArgs);
       const contract = await loadAutoresearchMissionContract(missionDir);
-      const manifest = await loadAutoresearchRunManifest(runtime.repoRoot, JSON.parse((0, import_child_process36.execFileSync)("cat", [runtime.manifestFile], { encoding: "utf-8" })).run_id);
+      const manifest = await loadAutoresearchRunManifest(runtime.repoRoot, JSON.parse((0, import_child_process37.execFileSync)("cat", [runtime.manifestFile], { encoding: "utf-8" })).run_id);
       const decision = await processAutoresearchCandidate(contract, manifest, runtime.repoRoot);
       if (decision === "abort" || decision === "error") {
         return;
@@ -86646,7 +87753,7 @@ ${AUTORESEARCH_HELP}`
   await assertModeStartAllowed("autoresearch", contract.repoRoot);
   const runTag = buildAutoresearchRunTag();
   const plan = planWorktree(contract.repoRoot, contract.missionSlug, runTag);
-  (0, import_child_process36.execFileSync)("git", ["worktree", "add", "-b", plan.branchName, plan.worktreePath, "HEAD"], {
+  (0, import_child_process37.execFileSync)("git", ["worktree", "add", "-b", plan.branchName, plan.worktreePath, "HEAD"], {
     cwd: contract.repoRoot,
     stdio: "ignore"
   });
@@ -87531,11 +88638,26 @@ sessionCmd.command("search <query>").description("Search prior local session tra
     workingDirectory: process.cwd()
   });
 });
-var doctorCmd = program2.command("doctor").description("Diagnostic tools for troubleshooting OMC installation").option("--plugin-dir <path>", "Override OMC plugin root directory (sets OMC_PLUGIN_ROOT)").addHelpText("after", `
+var doctorCmd = program2.command("doctor").description("Diagnostic tools for troubleshooting OMC installation").option("--plugin-dir <path>", "Override OMC plugin root directory (sets OMC_PLUGIN_ROOT)").option("--team-routing", "Probe CLI presence for every provider referenced by team.roleRouting").option("--json", "Output as JSON (used with --team-routing)").addHelpText("after", `
 Examples:
   $ omc doctor conflicts                        Check for plugin conflicts
+  $ omc doctor team-routing                     Probe /team role-routing provider CLIs
+  $ omc doctor --team-routing                   Same as above (flag form)
   $ omc doctor --plugin-dir /path/to/plugin     Run diagnostics against a specific plugin dir`).hook("preAction", (thisCommand) => {
   applyPluginDirOption(thisCommand.opts().pluginDir);
+}).action(async (options) => {
+  if (options.teamRouting) {
+    const exitCode = await doctorTeamRoutingCommand({ json: options.json ?? false });
+    process.exit(exitCode);
+  }
+  doctorCmd.help();
+});
+doctorCmd.command("team-routing").description("Probe CLI presence for every provider referenced by team.roleRouting").option("--json", "Output as JSON").addHelpText("after", `
+Examples:
+  $ omc doctor team-routing                     Probe configured providers
+  $ omc doctor team-routing --json              Output results as JSON`).action(async (options) => {
+  const exitCode = await doctorTeamRoutingCommand({ json: options.json ?? false });
+  process.exit(exitCode);
 });
 doctorCmd.command("conflicts").description("Check for plugin coexistence issues and configuration conflicts").option("--json", "Output as JSON").option("--plugin-dir <path>", "Override OMC plugin root directory (sets OMC_PLUGIN_ROOT)").addHelpText("after", `
 Examples:
