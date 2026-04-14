@@ -81,12 +81,14 @@ jobs:
           set -o pipefail
 
           # Capture exit code of omc update itself (PIPESTATUS[0])
+          # npm install may emit deprecation warnings to stderr — those are not
+          # omc errors. Only fail on actual omc errors (error/exception/fail patterns).
           omc update 1>"$RUNNER_TEMP/omc-update.stdout.log" 2>"$RUNNER_TEMP/omc-update.stderr.log"
           UPDATE_EXIT=$?
 
-          # Fail if any content landed in stderr
-          if [ -s "$RUNNER_TEMP/omc-update.stderr.log" ]; then
-            echo "FAIL: omc update produced stderr:"
+          # Check for actual errors (not npm deprecation warnings)
+          if grep -qiE '^(error|exception|fail|critical)' "$RUNNER_TEMP/omc-update.stderr.log" 2>/dev/null; then
+            echo "FAIL: omc update produced errors:"
             cat "$RUNNER_TEMP/omc-update.stderr.log"
             echo "Full stdout:"
             cat "$RUNNER_TEMP/omc-update.stdout.log"
@@ -99,7 +101,7 @@ jobs:
             exit 1
           fi
 
-          echo "PASS: omc update succeeded with no stderr"
+          echo "PASS: omc update succeeded"
 
       # ── 5. Verify new omc version installed ──────────────────────────────────
 
