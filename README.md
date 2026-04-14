@@ -45,10 +45,16 @@ _Don't learn Claude Code. Just use OMC._
 
 **Step 1: Install**
 
-Marketplace/plugin install (recommended for most Claude Code users):
+Marketplace/plugin install (recommended for most Claude Code users).
+These are Claude Code slash commands — enter them **one at a time** (pasting both lines at once will fail):
 
 ```bash
 /plugin marketplace add https://github.com/Yeachan-Heo/oh-my-claudecode
+```
+
+Then:
+
+```bash
 /plugin install oh-my-claudecode
 ```
 
