@@ -368,6 +368,59 @@ Read src/hooks/bridge.ts first.`,
       }
     });
 
+    it('does not create mode state when the prompt only pastes prior skill transcript output', async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-keyword-pasted-skill-'));
+      try {
+        execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
+        const sessionId = 'keyword-pasted-skill-session';
+
+        const result = await processHook('keyword-detector', {
+          sessionId,
+          prompt: `Investigate why this pasted transcript branched sessions:
+
+[MAGIC KEYWORD: RALPH]
+Skill: oh-my-claudecode:ralph
+User request:
+ralph fix parser`,
+          directory: tempDir,
+        });
+
+        expect(result.continue).toBe(true);
+        expect(result.message).toBeUndefined();
+
+        const sessionDir = join(tempDir, '.omc', 'state', 'sessions', sessionId);
+        expect(existsSync(join(sessionDir, 'ralph-state.json'))).toBe(false);
+        expect(existsSync(join(sessionDir, 'ultrawork-state.json'))).toBe(false);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not create mode state when the prompt only pastes shell transcript command lines', async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-keyword-pasted-shell-'));
+      try {
+        execFileSync('git', ['init'], { cwd: tempDir, stdio: 'pipe' });
+        const sessionId = 'keyword-pasted-shell-session';
+
+        const result = await processHook('keyword-detector', {
+          sessionId,
+          prompt: `Summarize this log:
+$ ralph fix parser
+$ ultrawork search the codebase`,
+          directory: tempDir,
+        });
+
+        expect(result.continue).toBe(true);
+        expect(result.message).toBeUndefined();
+
+        const sessionDir = join(tempDir, '.omc', 'state', 'sessions', sessionId);
+        expect(existsSync(join(sessionDir, 'ralph-state.json'))).toBe(false);
+        expect(existsSync(join(sessionDir, 'ultrawork-state.json'))).toBe(false);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
     it('seeds inert autopilot state for keyword routing so stop enforcement stays inert until the skill confirms', async () => {
       const tempDir = mkdtempSync(join(tmpdir(), 'bridge-routing-keyword-autopilot-'));
       try {

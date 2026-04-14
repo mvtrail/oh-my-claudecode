@@ -168,7 +168,7 @@ function isReviewSeedContext(text) {
 }
 
 function sanitizeForKeywordDetection(text) {
-  return text
+  return stripPastedCommandPayloads(text)
     // 0. Strip HTML/markdown comments before tag stripping
     .replace(/<!--[\s\S]*?-->/g, '')
     // 1. Strip XML-style tag blocks: <tag-name ...>...</tag-name> (multi-line, greedy on tag name)
@@ -188,6 +188,131 @@ function sanitizeForKeywordDetection(text) {
     .replace(/```[\s\S]*?```/g, '')
     // 6. Strip inline code (existing)
     .replace(/`[^`]+`/g, '');
+}
+
+const PASTED_MAGIC_KEYWORD_HEADER_PATTERN =
+  /^\s*\[MAGIC KEYWORDS?(?: DETECTED)?:.*$/i;
+const ROLE_BOUNDARY_PATTERN =
+  /^<\s*\/?\s*(system|human|assistant|user|tool_use|tool_result)\b[^>]*>/i;
+const SKILL_TRANSCRIPT_LINE_PATTERN =
+  /^\s*Skill:\s+oh-my-(?:claudecode|codex):/i;
+const USER_REQUEST_LINE_PATTERN = /^\s*User request:\s*$/i;
+const SHELL_TRANSCRIPT_LINE_PATTERN = /^\s*[$%❯]\s+/;
+const GIT_DIFF_START_PATTERNS = [
+  /^diff\s+--git\s+a\//,
+  /^index\s+[0-9a-f]+\.\.[0-9a-f]+(?:\s+\d+)?$/i,
+  /^(?:---|\+\+\+)\s+[ab]\//,
+  /^@@\s+-\d+/,
+];
+const GIT_DIFF_CONTINUATION_PATTERNS = [
+  /^new file mode\s+\d+$/i,
+  /^deleted file mode\s+\d+$/i,
+  /^similarity index\s+\d+%$/i,
+  /^rename (?:from|to)\s+/i,
+  /^Binary files .+ differ$/i,
+  /^(?:diff\s+--git\s+a\/|index\s+[0-9a-f]+\.\.[0-9a-f]+|(?:---|\+\+\+)\s+[ab]\/|@@\s+-\d+)/i,
+  /^[ +\-].*/,
+];
+
+function stripPastedCommandPayloads(text) {
+  const lines = text.split('\n');
+  const sanitized = [];
+  let insideRoleBlock = false;
+  let insideDiffBlock = false;
+  let insideMagicKeywordBlock = false;
+  let magicBlockSawUserRequest = false;
+  let magicBlockSawRequestPayload = false;
+  let previousLineWasUserRequest = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (insideMagicKeywordBlock) {
+      if (ROLE_BOUNDARY_PATTERN.test(trimmed)) {
+        insideRoleBlock = !/^<\s*\//.test(trimmed);
+        insideMagicKeywordBlock = false;
+        magicBlockSawUserRequest = false;
+        magicBlockSawRequestPayload = false;
+        continue;
+      }
+
+      if (USER_REQUEST_LINE_PATTERN.test(line)) {
+        magicBlockSawUserRequest = true;
+        magicBlockSawRequestPayload = false;
+        continue;
+      }
+
+      if (magicBlockSawUserRequest) {
+        if (trimmed) {
+          magicBlockSawRequestPayload = true;
+          continue;
+        }
+
+        if (magicBlockSawRequestPayload) {
+          insideMagicKeywordBlock = false;
+          magicBlockSawUserRequest = false;
+          magicBlockSawRequestPayload = false;
+          sanitized.push(line);
+          continue;
+        }
+      }
+
+      continue;
+    }
+
+    if (PASTED_MAGIC_KEYWORD_HEADER_PATTERN.test(line)) {
+      insideMagicKeywordBlock = true;
+      magicBlockSawUserRequest = false;
+      magicBlockSawRequestPayload = false;
+      continue;
+    }
+
+    if (ROLE_BOUNDARY_PATTERN.test(trimmed)) {
+      insideRoleBlock = !/^<\s*\//.test(trimmed);
+      continue;
+    }
+
+    if (insideRoleBlock) {
+      continue;
+    }
+
+    if (!trimmed) {
+      sanitized.push(line);
+      insideDiffBlock = false;
+      previousLineWasUserRequest = false;
+      continue;
+    }
+
+    if (previousLineWasUserRequest) {
+      previousLineWasUserRequest = false;
+      continue;
+    }
+
+    if (USER_REQUEST_LINE_PATTERN.test(line) || SKILL_TRANSCRIPT_LINE_PATTERN.test(line)) {
+      previousLineWasUserRequest = USER_REQUEST_LINE_PATTERN.test(line);
+      continue;
+    }
+
+    if (SHELL_TRANSCRIPT_LINE_PATTERN.test(line) && !/^\s*\$\w/.test(line)) {
+      continue;
+    }
+
+    if (insideDiffBlock) {
+      if (GIT_DIFF_CONTINUATION_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+        continue;
+      }
+      insideDiffBlock = false;
+    }
+
+    if (GIT_DIFF_START_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+      insideDiffBlock = true;
+      continue;
+    }
+
+    sanitized.push(line);
+  }
+
+  return sanitized.join('\n');
 }
 
 const INFORMATIONAL_INTENT_PATTERNS = [

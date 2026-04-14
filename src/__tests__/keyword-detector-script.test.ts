@@ -161,6 +161,44 @@ OMC Ultrawork = "특수부대 작전 반"
     expect(context).toBe('');
   });
 
+  it('does not branch pasted skill transcript payloads into a fresh Ralph invocation', () => {
+    const output = runKeywordDetector(`Investigate why this pasted transcript branched sessions:
+
+[MAGIC KEYWORD: RALPH]
+Skill: oh-my-claudecode:ralph
+User request:
+ralph fix parser`);
+    const context = output.hookSpecificOutput?.additionalContext ?? '';
+
+    expect(output.continue).toBe(true);
+    expect(context).not.toContain('[MAGIC KEYWORD: RALPH]');
+    expect(context).toBe('');
+  });
+
+  it('does not branch pasted shell transcript lines into fresh skill invocations', () => {
+    const output = runKeywordDetector(`Summarize this log:
+$ ralph fix parser
+$ ultrawork search the codebase`);
+    const context = output.hookSpecificOutput?.additionalContext ?? '';
+
+    expect(output.continue).toBe(true);
+    expect(context).toBe('');
+  });
+
+  it('does not branch pasted git diff hunks into fresh skill invocations', () => {
+    const output = runKeywordDetector(`Please explain this diff:
+diff --git a/a b/b
+--- a/a
++++ b/b
+@@ -1,2 +1,2 @@
++ ralph fix parser
++ autopilot build me an app`);
+    const context = output.hookSpecificOutput?.additionalContext ?? '';
+
+    expect(output.continue).toBe(true);
+    expect(context).toBe('');
+  });
+
   // Regression: issue #2541 — review-seed echo must not trip code-review / security-review alerts
   it('does not activate code-review when prompt is echoed review-instruction text with approve/request-changes/merge-ready', () => {
     const prompt = [

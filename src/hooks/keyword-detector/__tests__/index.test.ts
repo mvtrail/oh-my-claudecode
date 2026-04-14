@@ -78,6 +78,54 @@ World`);
   });
 
   describe('sanitizeForKeywordDetection', () => {
+    it('should strip pasted magic-keyword transcript payloads and preserve surrounding prose', () => {
+      const result = sanitizeForKeywordDetection(`Investigate why this pasted transcript branched sessions:
+
+[MAGIC KEYWORD: RALPH]
+Skill: oh-my-claudecode:ralph
+User request:
+ralph fix parser
+
+Summarize the failure mode only.`);
+
+      expect(result).toContain('Investigate why this pasted transcript branched sessions:');
+      expect(result).toContain('Summarize the failure mode only.');
+      expect(result).not.toContain('[MAGIC KEYWORD: RALPH]');
+      expect(result).not.toContain('Skill: oh-my-claudecode:ralph');
+      expect(result).not.toContain('ralph fix parser');
+    });
+
+    it('should strip pasted git diff hunks that mention execution keywords', () => {
+      const result = sanitizeForKeywordDetection(`Please explain this diff:
+diff --git a/a b/b
+--- a/a
++++ b/b
+@@ -1,2 +1,2 @@
++ ralph fix parser
++ autopilot build me an app
+
+What actually caused the regression?`);
+
+      expect(result).toContain('Please explain this diff:');
+      expect(result).toContain('What actually caused the regression?');
+      expect(result).not.toContain('ralph fix parser');
+      expect(result).not.toContain('autopilot build me an app');
+    });
+
+    it('should strip quoted assistant transcript blocks', () => {
+      const result = sanitizeForKeywordDetection(`Please explain this transcript:
+<assistant>
+[MAGIC KEYWORD: AUTOPILOT]
+Skill: oh-my-claudecode:autopilot
+</assistant>
+Why did this happen?`);
+
+      expect(result).toContain('Please explain this transcript:');
+      expect(result).toContain('Why did this happen?');
+      expect(result).not.toContain('AUTOPILOT');
+      expect(result).not.toContain('Skill: oh-my-claudecode:autopilot');
+    });
+
     it('should strip XML tag blocks', () => {
       const result = sanitizeForKeywordDetection('<system-reminder>ralph</system-reminder>');
       expect(result).not.toContain('ralph');
@@ -447,6 +495,34 @@ OMC Ultrawork = "특수부대 작전 반"
           'Compare DeerFlow vs ultrawork, then use ultrawork on issue #2474 in src/hooks/keyword-detector/index.ts',
         );
         expect(result.find((r) => r.type === 'ultrawork')).toBeDefined();
+      });
+
+      it('should NOT detect pasted skill transcript blocks as fresh activations', () => {
+        const result = detectKeywordsWithType(`Investigate why this pasted transcript branched sessions:
+
+[MAGIC KEYWORD: RALPH]
+Skill: oh-my-claudecode:ralph
+User request:
+ralph fix parser`);
+
+        expect(result).toEqual([]);
+      });
+
+      it('should NOT detect pasted git diff hunks as fresh activations', () => {
+        const result = detectKeywordsWithType(`Please explain this diff:
+diff --git a/a b/b
+--- a/a
++++ b/b
+@@ -1,2 +1,2 @@
++ ralph fix parser
++ autopilot build me an app`);
+
+        expect(result).toEqual([]);
+      });
+
+      it('should still detect explicit $ralph invocation typed by the user', () => {
+        const result = detectKeywordsWithType('$ralph fix parser state handling');
+        expect(result.find((r) => r.type === 'ralph')).toBeDefined();
       });
     });
 
