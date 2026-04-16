@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
-import { join } from 'node:path';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 
 const SCRIPT_PATH = join(process.cwd(), 'scripts', 'keyword-detector.mjs');
 const NODE = process.execPath;
@@ -32,6 +32,10 @@ function runKeywordDetector(prompt: string, cwd = process.cwd(), sessionId = 'se
       additionalContext?: string;
     };
   };
+}
+
+function getRalplanStatePath(cwd: string, sessionId: string) {
+  return join(cwd, '.omc', 'state', 'sessions', sessionId, 'ralplan-state.json');
 }
 
 describe('keyword-detector.mjs mode-message dispatch', () => {
@@ -67,6 +71,61 @@ describe('keyword-detector.mjs mode-message dispatch', () => {
 
     expect(context).toContain('[MAGIC KEYWORD: RALPLAN]');
     expect(context).toContain('name: ralplan');
+  });
+
+  it('does not emit or activate ralplan for informational/question mentions', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'keyword-detector-ralplan-info-'));
+    const sessionId = 'session-2619-info';
+    const output = runKeywordDetector(
+      'Verify the actual UserPromptSubmit/stop-hook path that activates ralplan state, reproduce the false activation on non-task keyword mention.',
+      cwd,
+      sessionId,
+    );
+    const context = output.hookSpecificOutput?.additionalContext ?? '';
+    const ralplanStatePath = getRalplanStatePath(cwd, sessionId);
+
+    expect(output.continue).toBe(true);
+    expect(context).not.toContain('[MAGIC KEYWORD: RALPLAN]');
+    expect(existsSync(ralplanStatePath)).toBe(false);
+  });
+
+  it('still activates ralplan state for a true ralplan task invocation', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'keyword-detector-ralplan-task-'));
+    const sessionId = 'session-2619-task';
+    const output = runKeywordDetector('please use ralplan to plan issue #2053', cwd, sessionId);
+    const context = output.hookSpecificOutput?.additionalContext ?? '';
+    const ralplanStatePath = getRalplanStatePath(cwd, sessionId);
+
+    expect(output.continue).toBe(true);
+    expect(context).toContain('[MAGIC KEYWORD: RALPLAN]');
+    expect(existsSync(ralplanStatePath)).toBe(true);
+
+    const state = JSON.parse(readFileSync(ralplanStatePath, 'utf-8')) as {
+      active?: boolean;
+      awaiting_confirmation?: boolean;
+    };
+    expect(state.active).toBe(true);
+    expect(state.awaiting_confirmation).toBe(true);
+  });
+
+  it('does not activate ralplan from a delegated /ask codex payload', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'keyword-detector-ask-codex-'));
+
+    try {
+      const sessionId = 'ask-codex-session';
+      const output = runKeywordDetector(
+        '/ask codex 지금까지 논의한걸 ralplan으로 계획서 작성해줘',
+        tempDir,
+        sessionId,
+      );
+
+      expect(output.continue).toBe(true);
+      expect(output.suppressOutput).toBe(true);
+      expect(output.hookSpecificOutput).toBeUndefined();
+      expect(existsSync(join(tempDir, '.omc', 'state', 'sessions', sessionId, 'ralplan-state.json'))).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('initializes ralplan startup state and init context for explicit /ralplan slash invoke', () => {
@@ -153,6 +212,44 @@ OMC Ultrawork = "특수부대 작전 반"
 
     expect(output.continue).toBe(true);
     expect(context).not.toContain('[MAGIC KEYWORD: ULTRAWORK]');
+    expect(context).toBe('');
+  });
+
+  it('does not branch pasted skill transcript payloads into a fresh Ralph invocation', () => {
+    const output = runKeywordDetector(`Investigate why this pasted transcript branched sessions:
+
+[MAGIC KEYWORD: RALPH]
+Skill: oh-my-claudecode:ralph
+User request:
+ralph fix parser`);
+    const context = output.hookSpecificOutput?.additionalContext ?? '';
+
+    expect(output.continue).toBe(true);
+    expect(context).not.toContain('[MAGIC KEYWORD: RALPH]');
+    expect(context).toBe('');
+  });
+
+  it('does not branch pasted shell transcript lines into fresh skill invocations', () => {
+    const output = runKeywordDetector(`Summarize this log:
+$ ralph fix parser
+$ ultrawork search the codebase`);
+    const context = output.hookSpecificOutput?.additionalContext ?? '';
+
+    expect(output.continue).toBe(true);
+    expect(context).toBe('');
+  });
+
+  it('does not branch pasted git diff hunks into fresh skill invocations', () => {
+    const output = runKeywordDetector(`Please explain this diff:
+diff --git a/a b/b
+--- a/a
++++ b/b
+@@ -1,2 +1,2 @@
++ ralph fix parser
++ autopilot build me an app`);
+    const context = output.hookSpecificOutput?.additionalContext ?? '';
+
+    expect(output.continue).toBe(true);
     expect(context).toBe('');
   });
 

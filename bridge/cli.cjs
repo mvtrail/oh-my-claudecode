@@ -78865,6 +78865,9 @@ function getPromptText(input) {
 function isExplicitRalplanSlashInvocation(promptText) {
   return /^\s*\/(?:oh-my-claudecode:)?ralplan(?:\s|$)/i.test(promptText);
 }
+function isExplicitAskSlashInvocation(promptText) {
+  return /^\s*\/(?:oh-my-claudecode:)?ask\s+(?:claude|codex|gemini)\b/i.test(promptText);
+}
 function activateRalplanStartupState(directory, sessionId) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
   writeModeState(
@@ -78888,6 +78891,9 @@ async function processKeywordDetector(input) {
   }
   const promptText = getPromptText(input);
   if (!promptText) {
+    return { continue: true };
+  }
+  if (isExplicitAskSlashInvocation(promptText)) {
     return { continue: true };
   }
   const cleanedText = removeCodeBlocks2(promptText);
