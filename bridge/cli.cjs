@@ -23695,9 +23695,8 @@ async function notify(event, data) {
         const { getNewPaneTail: getNewPaneTail2 } = await Promise.resolve().then(() => (init_pane_fresh_capture(), pane_fresh_capture_exports));
         const tailLines = getTmuxTailLines(config2);
         const rawTail = payload.projectPath ? getNewPaneTail2(payload.tmuxPaneId, (0, import_path72.join)(payload.projectPath, ".omc", "state"), tailLines) : capturePaneContent3(payload.tmuxPaneId, tailLines);
-        const tail = parseTmuxTail(rawTail, tailLines);
-        if (tail) {
-          payload.tmuxTail = tail;
+        if (rawTail) {
+          payload.tmuxTail = rawTail;
           payload.maxTailLines = tailLines;
         }
       } catch {

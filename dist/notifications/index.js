@@ -18,7 +18,7 @@ export { interpolateTemplate, getDefaultTemplate, validateTemplate, computeTempl
 export { verifySlackSignature, isTimestampValid, validateSlackEnvelope, validateSlackMessage, SlackConnectionStateTracker, } from "./slack-socket.js";
 export { redactTokens } from "./redact.js";
 import { getNotificationConfig, isEventEnabled, getVerbosity, getTmuxTailLines, isEventAllowedByVerbosity, shouldIncludeTmuxTail, } from "./config.js";
-import { formatNotification, parseTmuxTail } from "./formatter.js";
+import { formatNotification } from "./formatter.js";
 import { dispatchNotifications } from "./dispatcher.js";
 import { getCurrentTmuxSession } from "./tmux.js";
 import { getHookConfig, resolveEventTemplate } from "./hook-config.js";
@@ -90,9 +90,8 @@ export async function notify(event, data) {
                 const rawTail = payload.projectPath
                     ? getNewPaneTail(payload.tmuxPaneId, join(payload.projectPath, ".omc", "state"), tailLines)
                     : capturePaneContent(payload.tmuxPaneId, tailLines);
-                const tail = parseTmuxTail(rawTail, tailLines);
-                if (tail) {
-                    payload.tmuxTail = tail;
+                if (rawTail) {
+                    payload.tmuxTail = rawTail;
                     payload.maxTailLines = tailLines;
                 }
             }
