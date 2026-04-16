@@ -446,7 +446,11 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
         expect(hookOutput.permissionDecisionReason).toContain('MODEL ROUTING');
     });
     // === Agent definition model routing (issue: subagent_type bare-model-id on Bedrock) ===
-    it('denies Agent call with subagent_type whose definition has a bare Anthropic model ID when forceInherit is enabled', () => {
+    it('denies Agent call when a discovered plugin agent definition has a bare Anthropic model ID', () => {
+        const pluginRoot = join(tempDir, 'bare-model-plugin-agent');
+        const agentsDir = join(pluginRoot, 'agents');
+        mkdirSync(agentsDir, { recursive: true });
+        writeFileSync(join(agentsDir, 'critic.md'), '---\nname: critic\nmodel: claude-opus-4-6\n---\nPlugin critic body.');
         const output = runPreToolEnforcerWithEnv({
             tool_name: 'Agent',
             toolInput: {
@@ -459,6 +463,7 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
         }, {
             OMC_ROUTING_FORCE_INHERIT: 'true',
             OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+            CLAUDE_PLUGIN_ROOT: pluginRoot,
         });
         const hookOutput = output.hookSpecificOutput;
         expect(output.continue).toBe(true);
@@ -466,7 +471,11 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
         expect(hookOutput.permissionDecisionReason).toContain('[MODEL ROUTING]');
         expect(hookOutput.permissionDecisionReason).toContain('claude-opus-4-6');
     });
-    it('denies Task call with subagent_type whose definition has a bare Anthropic model ID when forceInherit is enabled', () => {
+    it('denies Task call when a discovered plugin agent definition has a bare Anthropic model ID', () => {
+        const pluginRoot = join(tempDir, 'bare-model-plugin-task');
+        const agentsDir = join(pluginRoot, 'agents');
+        mkdirSync(agentsDir, { recursive: true });
+        writeFileSync(join(agentsDir, 'executor.md'), '---\nname: executor\nmodel: claude-sonnet-4-6\n---\nPlugin executor body.');
         const output = runPreToolEnforcerWithEnv({
             tool_name: 'Task',
             toolInput: {
@@ -479,13 +488,18 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
         }, {
             OMC_ROUTING_FORCE_INHERIT: 'true',
             OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+            CLAUDE_PLUGIN_ROOT: pluginRoot,
         });
         const hookOutput = output.hookSpecificOutput;
         expect(output.continue).toBe(true);
         expect(hookOutput.permissionDecision).toBe('deny');
         expect(hookOutput.permissionDecisionReason).toContain('[MODEL ROUTING]');
     });
-    it('deny message includes the bare model from the definition and suggests the tier alias', () => {
+    it('deny message includes the bare model from a plugin definition and suggests the tier alias', () => {
+        const pluginRoot = join(tempDir, 'bare-model-plugin-message');
+        const agentsDir = join(pluginRoot, 'agents');
+        mkdirSync(agentsDir, { recursive: true });
+        writeFileSync(join(agentsDir, 'critic.md'), '---\nname: critic\nmodel: claude-opus-4-6\n---\nPlugin critic body.');
         const output = runPreToolEnforcerWithEnv({
             tool_name: 'Agent',
             toolInput: {
@@ -498,6 +512,7 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
         }, {
             OMC_ROUTING_FORCE_INHERIT: 'true',
             OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
+            CLAUDE_PLUGIN_ROOT: pluginRoot,
         });
         const reason = output.hookSpecificOutput.permissionDecisionReason;
         expect(reason).toContain('claude-opus-4-6');
@@ -558,6 +573,23 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
         expect(output.continue).toBe(true);
         expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
     });
+    it('does not deny shipped agent definitions that use routable tier aliases in frontmatter', () => {
+        const output = runPreToolEnforcerWithEnv({
+            tool_name: 'Agent',
+            toolInput: {
+                subagent_type: 'oh-my-claudecode:critic',
+                description: 'Review spec',
+                prompt: 'Review this spec',
+            },
+            cwd: tempDir,
+            session_id: 'session-shipped-tier-alias',
+        }, {
+            OMC_ROUTING_FORCE_INHERIT: 'true',
+            OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6-v1:0',
+        });
+        expect(output.continue).toBe(true);
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
+    });
     it('does not throw or deny when subagent_type is a non-string value', () => {
         const output = runPreToolEnforcerWithEnv({
             tool_name: 'Agent',
@@ -592,7 +624,7 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
         expect(output.continue).toBe(true);
         expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
     });
-    it('falls back to script-relative agents dir when CLAUDE_PLUGIN_ROOT points to a non-existent path', () => {
+    it('falls back to script-relative agents dir when CLAUDE_PLUGIN_ROOT points to a non-existent path and allows shipped tier aliases', () => {
         const output = runPreToolEnforcerWithEnv({
             tool_name: 'Agent',
             toolInput: {
@@ -607,14 +639,10 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
             OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
             CLAUDE_PLUGIN_ROOT: '/nonexistent/path/that/does/not/exist',
         });
-        // Despite stale CLAUDE_PLUGIN_ROOT, falls back to script-relative agents dir and detects bare model
-        const hookOutput = output.hookSpecificOutput;
         expect(output.continue).toBe(true);
-        expect(hookOutput.permissionDecision).toBe('deny');
-        expect(hookOutput.permissionDecisionReason).toContain('[MODEL ROUTING]');
-        expect(hookOutput.permissionDecisionReason).toContain('claude-opus-4-6');
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
     });
-    it('falls back to script-relative agents dir when CLAUDE_PLUGIN_ROOT/agents exists but lacks the specific agent file', () => {
+    it('falls back to script-relative agents dir when CLAUDE_PLUGIN_ROOT/agents exists but lacks the specific agent file, and allows shipped tier aliases', () => {
         // CLAUDE_PLUGIN_ROOT/agents/ exists (non-empty check passes) but does not contain critic.md
         const pluginRoot = join(tempDir, 'partial-plugin');
         const pluginAgentsDir = join(pluginRoot, 'agents');
@@ -635,12 +663,8 @@ describe('pre-tool-enforcer fallback gating (issue #970)', () => {
             OMC_SUBAGENT_MODEL: 'global.anthropic.claude-sonnet-4-6',
             CLAUDE_PLUGIN_ROOT: pluginRoot,
         });
-        // Should fall back to script-relative agents/, find critic.md, and deny on bare model ID
-        const hookOutput = output.hookSpecificOutput;
         expect(output.continue).toBe(true);
-        expect(hookOutput.permissionDecision).toBe('deny');
-        expect(hookOutput.permissionDecisionReason).toContain('[MODEL ROUTING]');
-        expect(hookOutput.permissionDecisionReason).toContain('claude-opus-4-6');
+        expect(JSON.stringify(output)).not.toContain('MODEL ROUTING');
     });
     it('does not deny when model: appears inside a body --- block (not real frontmatter)', () => {
         // File starts with normal text, then a horizontal-rule --- section containing model:

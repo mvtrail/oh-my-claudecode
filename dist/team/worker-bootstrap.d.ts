@@ -12,7 +12,7 @@ export interface WorkerBootstrapParams {
     cwd: string;
 }
 export declare function generateTriggerMessage(teamName: string, workerName: string, teamStateRoot?: string): string;
-export declare function generatePromptModeStartupPrompt(teamName: string, workerName: string, teamStateRoot?: string): string;
+export declare function generatePromptModeStartupPrompt(teamName: string, workerName: string, teamStateRoot?: string, cliOutputContract?: string): string;
 export declare function generateMailboxTriggerMessage(teamName: string, workerName: string, count?: number, teamStateRoot?: string): string;
 /**
  * Generate the worker overlay markdown.
@@ -24,7 +24,7 @@ export declare function generateWorkerOverlay(params: WorkerBootstrapParams): st
 /**
  * Write the initial inbox file for a worker.
  */
-export declare function composeInitialInbox(teamName: string, workerName: string, content: string, cwd: string): Promise<void>;
+export declare function composeInitialInbox(teamName: string, workerName: string, content: string, cwd: string, cliOutputContract?: string): Promise<void>;
 /**
  * Append a message to the worker inbox.
  */

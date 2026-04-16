@@ -12,9 +12,10 @@ export function generateTriggerMessage(teamName, workerName, teamStateRoot = '.o
     }
     return `Read ${inboxPath}, execute now, report concrete progress.`;
 }
-export function generatePromptModeStartupPrompt(teamName, workerName, teamStateRoot = '.omc/state') {
+export function generatePromptModeStartupPrompt(teamName, workerName, teamStateRoot = '.omc/state', cliOutputContract) {
     const inboxPath = buildInstructionPath(teamStateRoot, 'team', teamName, 'workers', workerName, 'inbox.md');
-    return `Open ${inboxPath}. Follow it and begin the assigned work.`;
+    const base = `Open ${inboxPath}. Follow it and begin the assigned work.`;
+    return cliOutputContract ? `${base}\n${cliOutputContract}` : base;
 }
 export function generateMailboxTriggerMessage(teamName, workerName, count = 1, teamStateRoot = '.omc/state') {
     const normalizedCount = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
@@ -177,10 +178,13 @@ ${bootstrapInstructions ? `## Role Context\n${bootstrapInstructions}\n` : ''}`;
 /**
  * Write the initial inbox file for a worker.
  */
-export async function composeInitialInbox(teamName, workerName, content, cwd) {
+export async function composeInitialInbox(teamName, workerName, content, cwd, cliOutputContract) {
     const inboxPath = join(cwd, `.omc/state/team/${teamName}/workers/${workerName}/inbox.md`);
     await mkdir(dirname(inboxPath), { recursive: true });
-    await writeFile(inboxPath, content, 'utf-8');
+    const finalContent = cliOutputContract && !content.includes(cliOutputContract)
+        ? `${content}\n${cliOutputContract}`
+        : content;
+    await writeFile(inboxPath, finalContent, 'utf-8');
 }
 /**
  * Append a message to the worker inbox.

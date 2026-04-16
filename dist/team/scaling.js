@@ -12,7 +12,10 @@
 import { resolve } from 'path';
 import { mkdir } from 'fs/promises';
 import { tmuxExec, tmuxSpawn } from '../cli/tmux-utils.js';
-import { buildWorkerArgv, getWorkerEnv as getModelWorkerEnv, } from './model-contract.js';
+import { buildWorkerArgv, getWorkerEnv as getModelWorkerEnv, resolveClaudeWorkerModel, } from './model-contract.js';
+import { CANONICAL_TEAM_ROLES } from '../shared/types.js';
+import { normalizeDelegationRole } from '../features/delegation-routing/types.js';
+import { routeTaskToRole } from './role-router.js';
 import { teamReadConfig, teamWriteWorkerIdentity, teamReadWorkerStatus, teamAppendEvent, writeAtomic, } from './team-ops.js';
 import { withScalingLock, saveTeamConfig } from './monitor.js';
 import { sanitizeName, isWorkerAlive, killWorkerPanes, buildWorkerStartCommand, waitForPaneReady, } from './tmux-session.js';
@@ -123,19 +126,97 @@ export async function scaleUp(teamName, count, agentType, tasks, cwd, env = proc
             // Create worker directory
             const workerDirPath = absPath(leaderCwd, TeamPaths.workerDir(sanitized, workerName));
             await mkdir(workerDirPath, { recursive: true });
-            // Build startup command and create tmux pane
+            // Resolve per-worker provider/model from the team's routing snapshot
+            // (Option E stickiness — snapshot is immutable, never re-resolved).
+            // Worker's inferred role comes from the owned-task `role` field when all
+            // owned tasks agree on a single role; otherwise falls back to the
+            // caller-supplied agentType default.
+            const workerTasks = tasks.filter(t => t.owner === workerName);
+            const ownedRoles = Array.from(new Set(workerTasks.map(t => t.role).filter(Boolean)));
+            const inferredRole = ownedRoles.length === 1
+                ? ownedRoles[0]
+                : (workerTasks[0]
+                    ? routeTaskToRole(workerTasks[0].subject, workerTasks[0].description, 'executor').role
+                    : undefined);
+            const canonicalRoleSet = new Set(CANONICAL_TEAM_ROLES);
+            const canonical = inferredRole
+                ? (() => {
+                    const normalized = normalizeDelegationRole(inferredRole);
+                    return canonicalRoleSet.has(normalized) ? normalized : null;
+                })()
+                : null;
+            let workerAgentType = cliAgentType;
+            let workerModel;
+            // Only override caller's agentType when the worker's inferred role came
+            // from an explicit `task.role` (user opt-in). Pre-patch semantics: callers
+            // passing `--agent-type codex` stay on codex regardless of task text.
+            const hasExplicitOwnedRole = ownedRoles.length === 1;
+            const routedPair = hasExplicitOwnedRole && canonical
+                ? config.resolved_routing?.[canonical]
+                : undefined;
+            if (routedPair) {
+                const { primary } = routedPair;
+                const primaryProvider = primary.provider;
+                if (CLI_AGENT_TYPES.has(primaryProvider)) {
+                    workerAgentType = primaryProvider;
+                    workerModel = primary.model;
+                }
+            }
+            else if (cliAgentType === 'claude') {
+                // Honor Bedrock/Vertex default-model resolution for non-routed claude workers.
+                workerModel = resolveClaudeWorkerModel(env);
+            }
+            // AC-8: try the resolved provider first; on trust-path / not-found
+            // failure, emit a loud warning and retry with the snapshot's Claude
+            // fallback tuple. Aborting the scale_up silently would mask a missing
+            // CLI, so we only rollback if even the fallback cannot be built.
+            const tryBuildLaunch = (agentType, model) => {
+                const [launchBinary, ...launchArgs] = buildWorkerArgv(agentType, {
+                    teamName: sanitized,
+                    workerName,
+                    cwd: leaderCwd,
+                    ...(model ? { model } : {}),
+                });
+                return { launchBinary, launchArgs };
+            };
+            let launchBinary;
+            let launchArgs;
+            try {
+                ({ launchBinary, launchArgs } = tryBuildLaunch(workerAgentType, workerModel));
+            }
+            catch (primaryError) {
+                const primaryReason = primaryError instanceof Error ? primaryError.message : String(primaryError);
+                const fallbackPair = routedPair?.fallback;
+                const fallbackProvider = fallbackPair
+                    ? fallbackPair.provider
+                    : 'claude';
+                const fallbackModel = fallbackPair?.model;
+                process.stderr.write(`[team/scaling] cli_binary_missing:${workerAgentType}: ${primaryReason} — falling back to ${fallbackProvider} (AC-8)\n`);
+                await teamAppendEvent(sanitized, {
+                    type: 'team_leader_nudge',
+                    worker: 'leader-fixed',
+                    reason: `cli_binary_missing:${workerAgentType}:${primaryReason}:fallback=${fallbackProvider}`,
+                }, leaderCwd);
+                try {
+                    ({ launchBinary, launchArgs } = tryBuildLaunch(fallbackProvider, fallbackModel));
+                    workerAgentType = fallbackProvider;
+                    workerModel = fallbackModel;
+                }
+                catch (fallbackError) {
+                    const fallbackReason = fallbackError instanceof Error
+                        ? fallbackError.message
+                        : String(fallbackError);
+                    return await rollbackScaleUp(`Failed to resolve worker launch config for ${workerName} (primary=${workerAgentType}: ${primaryReason}; fallback=${fallbackProvider}: ${fallbackReason})`);
+                }
+            }
+            // Rebuild env using the final agentType (fallback may have swapped it).
             const extraEnv = {
-                ...getModelWorkerEnv(sanitized, workerName, cliAgentType, env),
+                ...getModelWorkerEnv(sanitized, workerName, workerAgentType, env),
                 OMC_TEAM_STATE_ROOT: teamStateRoot,
                 OMC_TEAM_LEADER_CWD: leaderCwd,
             };
             let cmd;
             try {
-                const [launchBinary, ...launchArgs] = buildWorkerArgv(cliAgentType, {
-                    teamName: sanitized,
-                    workerName,
-                    cwd: leaderCwd,
-                });
                 cmd = buildWorkerStartCommand({
                     teamName: sanitized,
                     workerName,
@@ -147,7 +228,7 @@ export async function scaleUp(teamName, count, agentType, tasks, cwd, env = proc
             }
             catch (error) {
                 const reason = error instanceof Error ? error.message : String(error);
-                return await rollbackScaleUp(`Failed to resolve worker launch config for ${workerName}: ${reason}`);
+                return await rollbackScaleUp(`Failed to build worker start command for ${workerName}: ${reason}`);
             }
             // Split from the rightmost worker pane or the leader pane
             const splitTarget = config.workers.length > 0

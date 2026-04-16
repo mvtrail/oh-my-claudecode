@@ -46,6 +46,8 @@ interface ZaiQuotaResponse {
             currentValue?: number;
             usage?: number;
             nextResetTime?: number;
+            unit?: number;
+            number?: number;
         }>;
     };
 }
@@ -64,11 +66,13 @@ export declare function isMinimaxHost(urlString: string): boolean;
 interface MinimaxModelRemain {
     model_name: string;
     current_interval_total_count: number;
+    /** Remaining request count in the current 5-hour window */
     current_interval_usage_count: number;
     start_time: number;
     end_time: number;
     remains_time: number;
     current_weekly_total_count: number;
+    /** Remaining request count in the current weekly window */
     current_weekly_usage_count: number;
     weekly_start_time: number;
     weekly_end_time: number;
@@ -86,7 +90,13 @@ interface MinimaxCodingPlanResponse {
  */
 export declare function parseUsageResponse(response: UsageApiResponse): RateLimits | null;
 /**
- * Parse z.ai API response into RateLimits
+ * Parse z.ai API response into RateLimits.
+ *
+ * Weekly TOKENS_LIMIT exists only for plans purchased on/after 2026-02-12
+ * (UTC+8); older accounts return only the 5-hour bucket regardless of tier.
+ * Classify by the entry's `unit` field (not nextResetTime) so buckets don't
+ * swap near a weekly reset boundary; fall back to nextResetTime ordering
+ * when `unit` is absent.
  */
 export declare function parseZaiResponse(response: ZaiQuotaResponse): RateLimits | null;
 /**

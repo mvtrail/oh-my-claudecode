@@ -36,6 +36,8 @@ const TOKEN_REFRESH_URL_PATH = '/v1/oauth/token';
  * This is the production value; can be overridden via CLAUDE_CODE_OAUTH_CLIENT_ID env var.
  */
 const DEFAULT_OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
+// z.ai `unit` code for the weekly TOKENS_LIMIT bucket (observed, undocumented)
+const ZAI_UNIT_WEEK = 6;
 /**
  * Check if a URL points to z.ai (exact hostname match)
  */
@@ -666,15 +668,21 @@ export function parseUsageResponse(response) {
     return result;
 }
 /**
- * Parse z.ai API response into RateLimits
+ * Parse z.ai API response into RateLimits.
+ *
+ * Weekly TOKENS_LIMIT exists only for plans purchased on/after 2026-02-12
+ * (UTC+8); older accounts return only the 5-hour bucket regardless of tier.
+ * Classify by the entry's `unit` field (not nextResetTime) so buckets don't
+ * swap near a weekly reset boundary; fall back to nextResetTime ordering
+ * when `unit` is absent.
  */
 export function parseZaiResponse(response) {
     const limits = response.data?.limits;
     if (!limits || limits.length === 0)
         return null;
-    const tokensLimit = limits.find(l => l.type === 'TOKENS_LIMIT');
+    const allTokensLimits = limits.filter(l => l.type === 'TOKENS_LIMIT');
     const timeLimit = limits.find(l => l.type === 'TIME_LIMIT');
-    if (!tokensLimit && !timeLimit)
+    if (allTokensLimits.length === 0 && !timeLimit)
         return null;
     // Parse nextResetTime (Unix timestamp in milliseconds) to Date
     const parseResetTime = (timestamp) => {
@@ -688,13 +696,44 @@ export function parseZaiResponse(response) {
             return null;
         }
     };
-    return {
-        fiveHourPercent: clamp(tokensLimit?.percentage),
-        fiveHourResetsAt: parseResetTime(tokensLimit?.nextResetTime),
-        // z.ai has no weekly quota; leave weeklyPercent undefined so HUD hides it
+    // Earlier reset wins 5h slot; equal reset, smaller percentage wins
+    const sortByResetTime = (a, b) => {
+        const aTime = a.nextResetTime && a.nextResetTime > 0 ? a.nextResetTime : Infinity;
+        const bTime = b.nextResetTime && b.nextResetTime > 0 ? b.nextResetTime : Infinity;
+        if (aTime !== bTime)
+            return aTime - bTime;
+        return (a.percentage ?? 0) - (b.percentage ?? 0);
+    };
+    const weeklyByUnit = allTokensLimits.find(l => l.unit === ZAI_UNIT_WEEK);
+    let fiveHourBucket;
+    let weeklyBucket;
+    if (weeklyByUnit) {
+        weeklyBucket = weeklyByUnit;
+        fiveHourBucket = allTokensLimits
+            .filter(l => l.unit !== ZAI_UNIT_WEEK)
+            .slice()
+            .sort(sortByResetTime)[0];
+    }
+    else {
+        // Legacy fallback: no unit field → sort all TOKENS_LIMIT by nextResetTime
+        const sorted = allTokensLimits.slice().sort(sortByResetTime);
+        fiveHourBucket = sorted[0];
+        weeklyBucket = sorted[1];
+    }
+    if (allTokensLimits.length > 2 && process.env.OMC_DEBUG) {
+        console.error(`[usage-api] z.ai returned ${allTokensLimits.length} TOKENS_LIMIT entries; using unit-based classification`);
+    }
+    const result = {
+        fiveHourPercent: clamp(fiveHourBucket?.percentage),
+        fiveHourResetsAt: parseResetTime(fiveHourBucket?.nextResetTime),
         monthlyPercent: timeLimit ? clamp(timeLimit.percentage) : undefined,
         monthlyResetsAt: timeLimit ? (parseResetTime(timeLimit.nextResetTime) ?? null) : undefined,
     };
+    if (weeklyBucket) {
+        result.weeklyPercent = clamp(weeklyBucket.percentage);
+        result.weeklyResetsAt = parseResetTime(weeklyBucket.nextResetTime);
+    }
+    return result;
 }
 /**
  * Fetch usage from MiniMax coding plan API
@@ -778,13 +817,14 @@ export function parseMinimaxResponse(response) {
         }
         return null;
     }
-    // Calculate interval usage percentage (avoid division by zero)
+    // MiniMax's "remains" endpoint reports remaining quota, not consumed quota.
+    // Convert remaining-count fields to used percentages for the HUD.
     const intervalTotal = codingModel.current_interval_total_count;
-    const intervalUsed = codingModel.current_interval_usage_count;
+    const intervalUsed = intervalTotal - codingModel.current_interval_usage_count;
     const intervalPercent = intervalTotal > 0 ? (intervalUsed / intervalTotal) * 100 : 0;
-    // Calculate weekly usage percentage
+    // Calculate weekly usage percentage from remaining weekly quota
     const weeklyTotal = codingModel.current_weekly_total_count;
-    const weeklyUsed = codingModel.current_weekly_usage_count;
+    const weeklyUsed = weeklyTotal - codingModel.current_weekly_usage_count;
     const weeklyPercent = weeklyTotal > 0 ? (weeklyUsed / weeklyTotal) * 100 : 0;
     // Parse reset times from Unix ms timestamps
     const parseResetTime = (timestamp) => {

@@ -354,15 +354,40 @@ describe('Builtin Skills', () => {
         it('rewrites built-in skill command examples to plugin-safe bridge invocations when omc is unavailable', () => {
             process.env.CLAUDE_PLUGIN_ROOT = '/plugin-root';
             process.env.PATH = '';
+            // Simulate a non-Claude-session context: the ask-skill rewriter only keeps
+            // `omc ask` form when running *inside* an active Claude session, so we must
+            // clear the session-detection vars that may leak in from the test runner.
+            const savedClaudeCode = process.env.CLAUDECODE;
+            const savedSessionId = process.env.CLAUDE_SESSION_ID;
+            const savedCodeSessionId = process.env.CLAUDECODE_SESSION_ID;
+            delete process.env.CLAUDECODE;
+            delete process.env.CLAUDE_SESSION_ID;
+            delete process.env.CLAUDECODE_SESSION_ID;
             clearSkillsCache();
-            const deepInterviewSkill = getBuiltinSkill('deep-interview');
-            const askSkill = getBuiltinSkill('ask');
-            expect(deepInterviewSkill?.template)
-                .toContain('zero-learning-curve setup lane for `node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs autoresearch`');
-            expect(deepInterviewSkill?.template)
-                .toContain('node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs autoresearch --mission "<mission>" --eval "<evaluator>"');
-            expect(askSkill?.template)
-                .toContain('node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs ask {{ARGUMENTS}}');
+            try {
+                const deepInterviewSkill = getBuiltinSkill('deep-interview');
+                const askSkill = getBuiltinSkill('ask');
+                expect(deepInterviewSkill?.template)
+                    .toContain('zero-learning-curve setup lane for `node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs autoresearch`');
+                expect(deepInterviewSkill?.template)
+                    .toContain('node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs autoresearch --mission "<mission>" --eval "<evaluator>"');
+                expect(askSkill?.template)
+                    .toContain('node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs ask {{ARGUMENTS}}');
+            }
+            finally {
+                if (savedClaudeCode === undefined)
+                    delete process.env.CLAUDECODE;
+                else
+                    process.env.CLAUDECODE = savedClaudeCode;
+                if (savedSessionId === undefined)
+                    delete process.env.CLAUDE_SESSION_ID;
+                else
+                    process.env.CLAUDE_SESSION_ID = savedSessionId;
+                if (savedCodeSessionId === undefined)
+                    delete process.env.CLAUDECODE_SESSION_ID;
+                else
+                    process.env.CLAUDECODE_SESSION_ID = savedCodeSessionId;
+            }
         });
         it('should expose pipeline metadata for omc-plan handoff into autopilot', () => {
             const skill = getBuiltinSkill('omc-plan');
