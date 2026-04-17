@@ -108,7 +108,7 @@ OMC exposes two different surfaces:
 | Ask providers | `omc ask codex "review this patch"` | `/ask codex "review this patch"` | Both route through the same advisor flow. |
 | Team orchestration | `omc team 2:codex "review auth flow"` | `/team 3:executor "fix all TypeScript errors"` | Both exist, but they are different runtimes: `omc team` launches tmux CLI workers; `/team` runs the in-session native team workflow. |
 | Autopilot / Ralph / Ultrawork / Deep Interview | — | `/autopilot ...`, `/ralph ...`, `/ultrawork ...`, `/deep-interview ...` | These are in-session skills. There is no `omc autopilot` / `omc ralph` / `omc ultrawork` CLI subcommand in this repo. |
-| Autoresearch | `omc autoresearch ...` | `/deep-interview --autoresearch ...` | `omc autoresearch` is the real CLI command. The in-session path is the setup/interview lane that helps you launch it. |
+| Autoresearch | `omc autoresearch` (**hard-deprecated shim**) | `/deep-interview --autoresearch ...` + `/oh-my-claudecode:autoresearch` | Setup stays in deep-interview; execution now belongs to the stateful skill. |
 
 ### Not Sure Where to Start?
 
@@ -340,23 +340,20 @@ Canonical env vars:
 
 Phase-1 aliases `OMX_ASK_ADVISOR_SCRIPT` and `OMX_ASK_ORIGINAL_TASK` are accepted with deprecation warnings.
 
-### Autoresearch (`omc autoresearch`)
+### Autoresearch (stateful skill)
 
-`omc autoresearch` is a real CLI command for the thin-supervisor autoresearch runtime:
-
-```bash
-omc autoresearch
-omc autoresearch --mission "improve startup performance" --eval "npm test -- --run src/cli/__tests__/autoresearch.test.ts"
-omc autoresearch init --topic "benchmark onboarding flow"
-```
-
-If you want Claude to help define the mission/evaluator first, start inside the session with:
+`omc autoresearch` is now a **hard-deprecated shim**. The authoritative workflow is:
 
 ```bash
 /deep-interview --autoresearch improve startup performance
+/oh-my-claudecode:autoresearch
 ```
 
-That in-session interview lane prepares and launches `omc autoresearch ...`; it is not a separate `autoresearch` slash skill.
+- `deep-interview --autoresearch` generates/sets up the mission and evaluator
+- `autoresearch` runs the bounded, single-mission stateful loop
+- each iteration records evaluation JSON plus markdown decision logs
+- non-passing iterations continue
+- strict stopping is controlled by an explicit max-runtime ceiling
 
 ### Rate Limit Wait
 

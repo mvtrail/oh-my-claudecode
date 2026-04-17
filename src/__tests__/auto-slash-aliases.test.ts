@@ -267,7 +267,7 @@ Deep interview body`
 
     expect(result.success).toBe(true);
     expect(result.replacementText).toContain('## Autoresearch Setup Mode');
-    expect(result.replacementText).toContain('autoresearch --mission "<mission>" --eval "<evaluator>"');
+    expect(result.replacementText).toContain('Skill("oh-my-claudecode:autoresearch")');
     expect(result.replacementText).toContain('Mission seed from invocation: `improve startup performance`');
     expect(result.replacementText).not.toContain('## Skill Pipeline');
   });
@@ -296,7 +296,7 @@ Deep interview body`
 
     expect(result.success).toBe(true);
     expect(result.replacementText)
-      .toContain('node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs autoresearch --mission "<mission>" --eval "<evaluator>"');
+      .toContain('Skill("oh-my-claudecode:autoresearch")');
   });
 
   it('keeps /ccg advisor asks on omc ask inside an active Claude session', async () => {

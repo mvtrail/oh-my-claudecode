@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { assertResetSafeWorktree, buildAutoresearchInstructions, loadAutoresearchRunManifest, materializeAutoresearchMissionToWorktree, prepareAutoresearchRuntime, processAutoresearchCandidate, } from '../runtime.js';
+import { assertResetSafeWorktree, buildAutoresearchInstructions, getAutoresearchMissionArtifactLayout, loadAutoresearchRunManifest, materializeAutoresearchMissionToWorktree, prepareAutoresearchRuntime, processAutoresearchCandidate, } from '../runtime.js';
 import { readModeState } from '../../lib/mode-state-io.js';
 async function initRepo() {
     const cwd = await mkdtemp(join(tmpdir(), 'omc-autoresearch-runtime-'));
@@ -129,10 +129,43 @@ describe('autoresearch runtime', () => {
             expect(state?.latest_evaluator_status).toBe('pass');
             expect(state?.results_file).toBe(runtime.resultsFile);
             expect(state?.baseline_commit).toBe(manifest.baseline_commit);
+            expect(state?.mission_spec_file).toBe(join(repo, '.omc', 'autoresearch', 'missions-demo', 'mission.md'));
+            expect(state?.evaluator_reference_file).toBe(join(repo, '.omc', 'autoresearch', 'missions-demo', 'evaluator.json'));
             const instructions = await readFile(runtime.instructionsFile, 'utf-8');
             expect(instructions).toMatch(/Last kept score:\s+1/i);
             expect(instructions).toMatch(/previous_iteration_outcome/i);
             expect(instructions).toMatch(/baseline established/i);
+        }
+        finally {
+            await rm(repo, { recursive: true, force: true });
+        }
+    });
+    it('materializes canonical mission artifacts and markdown decision log paths', async () => {
+        const repo = await initRepo();
+        try {
+            const contract = await makeContract(repo);
+            const worktreePath = join(repo, '..', `${repo.split('/').pop()}.omc-worktrees`, 'autoresearch-missions-demo-20260314t000500z');
+            execFileSync('git', ['worktree', 'add', '-b', 'autoresearch/missions-demo/20260314t000500z', worktreePath, 'HEAD'], {
+                cwd: repo,
+                stdio: 'ignore',
+            });
+            const worktreeContract = await materializeAutoresearchMissionToWorktree(contract, worktreePath);
+            const runtime = await prepareAutoresearchRuntime(worktreeContract, repo, worktreePath, {
+                runTag: '20260314T000500Z',
+                maxRuntimeMs: 60000,
+            });
+            const layout = getAutoresearchMissionArtifactLayout(repo, contract.missionSlug, runtime.runId);
+            expect(existsSync(layout.missionSpecFile)).toBe(true);
+            expect(existsSync(layout.evaluatorReferenceFile)).toBe(true);
+            expect(existsSync(layout.decisionLogFile)).toBe(true);
+            const decisionLog = await readFile(layout.decisionLogFile, 'utf-8');
+            expect(decisionLog).toContain('# Autoresearch Decision Log');
+            expect(decisionLog).toContain('## Iteration 0 — baseline');
+            const missionSpec = await readFile(layout.missionSpecFile, 'utf-8');
+            expect(missionSpec).toContain('# Mission');
+            const evaluatorRef = JSON.parse(await readFile(layout.evaluatorReferenceFile, 'utf-8'));
+            expect(evaluatorRef.command).toBe('node scripts/eval.js');
+            expect(evaluatorRef.format).toBe('json');
         }
         finally {
             await rm(repo, { recursive: true, force: true });
@@ -201,6 +234,12 @@ describe('autoresearch parity decisions', () => {
             expect(instructions).toMatch(/"decision": "keep"/);
             expect(instructions).toMatch(/"decision": "discard"/);
             expect(finalManifest.last_kept_commit).toBe(improvedCommit);
+            const decisionLog = await readFile(join(repo, '.omc', 'autoresearch', 'missions-demo', 'runs', runtime.runId, 'decision-log.md'), 'utf-8');
+            expect(decisionLog).toContain('## Iteration 1 — keep');
+            expect(decisionLog).toContain('## Iteration 2 — discard');
+            const evaluationOne = JSON.parse(await readFile(join(repo, '.omc', 'autoresearch', 'missions-demo', 'runs', runtime.runId, 'evaluations', 'iteration-0001.json'), 'utf-8'));
+            expect(evaluationOne.pass).toBe(true);
+            expect(evaluationOne.score).toBe(2);
         }
         finally {
             await rm(repo, { recursive: true, force: true });

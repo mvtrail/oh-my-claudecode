@@ -10,7 +10,7 @@ import { join, basename } from 'path';
 import { getClaudeConfigDir } from '../../utils/config-dir.js';
 import { resolveLiveData } from './live-data.js';
 import { parseFrontmatter, parseFrontmatterAliases, stripOptionalQuotes } from '../../utils/frontmatter.js';
-import { formatOmcCliInvocation, rewriteOmcCliInvocations } from '../../utils/omc-cli-rendering.js';
+import { rewriteOmcCliInvocations } from '../../utils/omc-cli-rendering.js';
 import { parseSkillPipelineMetadata, renderSkillPipelineGuidance } from '../../utils/skill-pipeline.js';
 import { renderSkillResourcesGuidance } from '../../utils/skill-resources.js';
 import { renderSkillRuntimeGuidance } from '../../features/builtin-skills/runtime-guidance.js';
@@ -215,14 +215,14 @@ function renderDeepInterviewAutoresearchGuidance(args) {
     const missionSeed = stripInvocationFlag(args, '--autoresearch');
     const lines = [
         '## Autoresearch Setup Mode',
-        `This deep-interview invocation was launched as the zero-learning-curve setup lane for \`${formatOmcCliInvocation('autoresearch')}\`.`,
+        'This deep-interview invocation was launched as the zero-learning-curve setup lane for the stateful `autoresearch` skill.',
         '',
         'Required behavior in this mode:',
         '- If the mission is not already clear, start by asking: "What should autoresearch improve or prove for this repo?"',
         '- Treat evaluator clarity as a required readiness gate before launch.',
-        '- When the mission and evaluator are ready, launch direct execution with:',
-        `  \`${formatOmcCliInvocation('autoresearch --mission "<mission>" --eval "<evaluator>" [--keep-policy <policy>] [--slug <slug>]')}\``,
-        '- Do **not** hand off to `omc-plan`, `autopilot`, `ralph`, or `team` in this mode.',
+        '- When the mission and evaluator are ready, write setup artifacts and hand off with:',
+        '  `Skill("oh-my-claudecode:autoresearch")`',
+        '- Do **not** hand off to `omc-plan`, `autopilot`, `ralph`, `team`, or the hard-deprecated `omc autoresearch` CLI in this mode.',
     ];
     if (missionSeed) {
         lines.push('', `Mission seed from invocation: \`${missionSeed}\``);

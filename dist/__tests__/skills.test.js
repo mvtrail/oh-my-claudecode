@@ -121,6 +121,7 @@ describe('Builtin Skills', () => {
             const expectedSkills = [
                 'ask',
                 'ai-slop-cleaner',
+                'autoresearch',
                 'autopilot',
                 'cancel',
                 'ccg',
@@ -287,8 +288,8 @@ describe('Builtin Skills', () => {
             expect(skill?.template).toContain('Ontology-style question for scope-fuzzy tasks');
             expect(skill?.template).toContain('Every round explicitly names the weakest dimension and why it is the next target');
             expect(skill?.argumentHint).toContain('--autoresearch');
-            expect(skill?.template).toContain('zero-learning-curve setup lane for `omc autoresearch`');
-            expect(skill?.template).toContain('autoresearch --mission "<mission>" --eval "<evaluator>"');
+            expect(skill?.template).toContain('zero-learning-curve setup lane for the stateful `autoresearch` skill');
+            expect(skill?.template).toContain('Skill("oh-my-claudecode:autoresearch")');
         });
         it('loads deep-interview ambiguityThreshold from settings before state init and updates the announcement copy', () => {
             const profileDir = mkdtempSync(join(tmpdir(), 'omc-skill-profile-'));
@@ -368,9 +369,9 @@ describe('Builtin Skills', () => {
                 const deepInterviewSkill = getBuiltinSkill('deep-interview');
                 const askSkill = getBuiltinSkill('ask');
                 expect(deepInterviewSkill?.template)
-                    .toContain('zero-learning-curve setup lane for `node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs autoresearch`');
+                    .toContain('zero-learning-curve setup lane for the stateful `autoresearch` skill');
                 expect(deepInterviewSkill?.template)
-                    .toContain('node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs autoresearch --mission "<mission>" --eval "<evaluator>"');
+                    .toContain('Skill("oh-my-claudecode:autoresearch")');
                 expect(askSkill?.template)
                     .toContain('node "$CLAUDE_PLUGIN_ROOT"/bridge/cli.cjs ask {{ARGUMENTS}}');
             }
@@ -388,6 +389,15 @@ describe('Builtin Skills', () => {
                 else
                     process.env.CLAUDECODE_SESSION_ID = savedCodeSessionId;
             }
+        });
+        it('should retrieve the autoresearch skill by name', () => {
+            const skill = getBuiltinSkill('autoresearch');
+            expect(skill).toBeDefined();
+            expect(skill?.name).toBe('autoresearch');
+            expect(skill?.template).toContain('Stateful single-mission improvement loop');
+            expect(skill?.template).toContain('max-runtime ceiling');
+            expect(skill?.template).toContain('per-iteration evaluation JSON');
+            expect(skill?.template).toContain('markdown decision logs');
         });
         it('should expose pipeline metadata for omc-plan handoff into autopilot', () => {
             const skill = getBuiltinSkill('omc-plan');
