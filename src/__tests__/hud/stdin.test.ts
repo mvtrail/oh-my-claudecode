@@ -68,6 +68,37 @@ describe('HUD stdin context percent', () => {
     expect(getContextPercent(stabilizeContextPercent(current, previous))).toBe(54);
   });
 
+  it('ignores cache_read_input_tokens in the manual fallback calculation', () => {
+    const stdin = makeStdin({
+      context_window: {
+        context_window_size: 1000,
+        current_usage: {
+          input_tokens: 120,
+          cache_creation_input_tokens: 30,
+          cache_read_input_tokens: 250_000,
+        },
+      },
+    });
+
+    expect(getContextPercent(stdin)).toBe(15);
+  });
+
+  it('keeps preferring native percentage even when cache reads are huge', () => {
+    const stdin = makeStdin({
+      context_window: {
+        used_percentage: 54,
+        context_window_size: 1000,
+        current_usage: {
+          input_tokens: 120,
+          cache_creation_input_tokens: 30,
+          cache_read_input_tokens: 250_000,
+        },
+      },
+    });
+
+    expect(getContextPercent(stdin)).toBe(54);
+  });
+
   it('does not hide a real context jump when the fallback differs materially', () => {
     const previous = makeStdin({
       context_window: {
@@ -92,6 +123,33 @@ describe('HUD stdin context percent', () => {
     });
 
     expect(getContextPercent(stabilizeContextPercent(current, previous))).toBe(20);
+  });
+
+  it('does not let cache-read spikes interfere with stabilization decisions', () => {
+    const previous = makeStdin({
+      context_window: {
+        used_percentage: 54,
+        context_window_size: 1000,
+        current_usage: {
+          input_tokens: 540,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      },
+    });
+    const current = makeStdin({
+      context_window: {
+        context_window_size: 1000,
+        current_usage: {
+          input_tokens: 520,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 250_000,
+        },
+      },
+    });
+
+    expect(getContextPercent(current)).toBe(52);
+    expect(getContextPercent(stabilizeContextPercent(current, previous))).toBe(54);
   });
 });
 

@@ -99,8 +99,7 @@ function getTotalTokens(stdin: StatuslineStdin): number {
   const usage = getCurrentUsage(stdin);
   return (
     (usage?.input_tokens ?? 0) +
-    (usage?.cache_creation_input_tokens ?? 0) +
-    (usage?.cache_read_input_tokens ?? 0)
+    (usage?.cache_creation_input_tokens ?? 0)
   );
 }
 
