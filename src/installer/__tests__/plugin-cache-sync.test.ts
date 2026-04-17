@@ -142,4 +142,45 @@ describe('syncInstalledPluginPayload', () => {
     expect(existsSync(join(cacheRoot, 'hooks', 'hooks.json'))).toBe(true);
     expect(existsSync(join(cacheRoot, 'scripts', 'run.cjs'))).toBe(true);
   });
+
+  it('rejects cache install roots that escape the cache directory via .. segments', async () => {
+    const configDir = process.env.CLAUDE_CONFIG_DIR as string;
+    const cacheBase = join(configDir, 'plugins', 'cache');
+    const escapedInstallPath = `${cacheBase}/../../../escaped-target`;
+    const escapedResolvedRoot = join(tempRoot, 'escaped-target');
+    const sourceRoot = join(tempRoot, 'marketplace-source-escape');
+
+    writePayloadTree(sourceRoot);
+    mkdirSync(cacheBase, { recursive: true });
+    mkdirSync(escapedResolvedRoot, { recursive: true });
+    mkdirSync(join(configDir, 'plugins'), { recursive: true });
+    writeFileSync(
+      join(configDir, 'plugins', 'installed_plugins.json'),
+      JSON.stringify({
+        version: 2,
+        plugins: {
+          'oh-my-claudecode@omc': [{ installPath: escapedInstallPath, version: '4.12.0' }],
+        },
+      }, null, 2),
+    );
+    writeFileSync(
+      join(configDir, 'plugins', 'known_marketplaces.json'),
+      JSON.stringify({
+        omc: {
+          installLocation: sourceRoot,
+          source: { source: 'directory', path: sourceRoot },
+        },
+      }, null, 2),
+    );
+
+    const installer = await freshInstaller();
+    const result = installer.syncInstalledPluginPayload();
+
+    expect(result.synced).toBe(false);
+    expect(result.errors).toEqual([]);
+    expect(result.sourceRoot).toBeNull();
+    expect(result.targetRoots).toEqual([]);
+    expect(existsSync(join(escapedResolvedRoot, 'package.json'))).toBe(false);
+    expect(existsSync(join(escapedResolvedRoot, 'skills', 'plan', 'SKILL.md'))).toBe(false);
+  });
 });
