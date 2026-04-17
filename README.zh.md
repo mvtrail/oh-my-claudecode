@@ -15,7 +15,7 @@
 
 *无需学习 Claude Code，直接使用 OMC。*
 
-[快速开始](#快速开始) • [文档](https://yeachan-heo.github.io/oh-my-claudecode-website) • [CLI 参考](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#cli-reference) • [工作流](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#workflows) • [迁移指南](docs/MIGRATION.md)
+[快速开始](#快速开始) • [文档](https://yeachan-heo.github.io/oh-my-claudecode-website) • [CLI 参考](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#cli-reference) • [工作流](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#workflows) • [迁移指南](docs/MIGRATION.md) • [Discord](https://discord.gg/PUwSMR9XNk)
 
 ---
 

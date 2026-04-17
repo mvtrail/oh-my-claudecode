@@ -15,7 +15,7 @@
 
 *Đừng học Claude Code. Cứ dùng OMC.*
 
-[Bắt đầu nhanh](#bắt-đầu-nhanh) • [Tài liệu](https://yeachan-heo.github.io/oh-my-claudecode-website) • [Tham chiếu CLI](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#cli-reference) • [Quy trình](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#workflows) • [Hướng dẫn di chuyển](docs/MIGRATION.md)
+[Bắt đầu nhanh](#bắt-đầu-nhanh) • [Tài liệu](https://yeachan-heo.github.io/oh-my-claudecode-website) • [Tham chiếu CLI](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#cli-reference) • [Quy trình](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#workflows) • [Hướng dẫn di chuyển](docs/MIGRATION.md) • [Discord](https://discord.gg/PUwSMR9XNk)
 
 ---
 

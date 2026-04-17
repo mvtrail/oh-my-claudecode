@@ -13,7 +13,7 @@
 
 _Lernen Sie nicht Claude Code. Nutzen Sie einfach OMC._
 
-[Loslegen](#schnellstart) • [Dokumentation](https://yeachan-heo.github.io/oh-my-claudecode-website) • [Migrationsleitfaden](docs/MIGRATION.md)
+[Loslegen](#schnellstart) • [Dokumentation](https://yeachan-heo.github.io/oh-my-claudecode-website) • [Migrationsleitfaden](docs/MIGRATION.md) • [Discord](https://discord.gg/PUwSMR9XNk)
 
 ---
 
