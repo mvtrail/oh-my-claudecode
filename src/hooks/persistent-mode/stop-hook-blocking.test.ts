@@ -868,6 +868,30 @@ describe("Stop Hook Blocking Contract", () => {
       expect(output.continue).toBe(true);
     });
 
+    it("returns continue: true for ScheduleWakeup-triggered stop", () => {
+      const sessionId = "scheduled-wakeup-mjs";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(
+        join(sessionDir, "ralph-state.json"),
+        JSON.stringify({
+          active: true,
+          iteration: 1,
+          max_iterations: 50,
+          session_id: sessionId,
+          started_at: new Date().toISOString(),
+          last_checked_at: new Date().toISOString(),
+        })
+      );
+
+      const output = runScript({
+        directory: tempDir,
+        sessionId,
+        stop_reason: "ScheduleWakeup",
+      });
+      expect(output.continue).toBe(true);
+    });
+
     it("returns continue: true when no modes are active", () => {
       const output = runScript({ directory: tempDir, sessionId: "no-modes" });
       expect(output.continue).toBe(true);
@@ -1056,6 +1080,30 @@ describe("Stop Hook Blocking Contract", () => {
         directory: tempDir,
         sessionId,
         stop_reason: "oauth_expired",
+      });
+      expect(output.continue).toBe(true);
+    });
+
+    it("returns continue: true for ScheduleWakeup-triggered stop", () => {
+      const sessionId = "scheduled-wakeup-cjs";
+      const sessionDir = join(tempDir, ".omc", "state", "sessions", sessionId);
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(
+        join(sessionDir, "ralph-state.json"),
+        JSON.stringify({
+          active: true,
+          iteration: 1,
+          max_iterations: 50,
+          session_id: sessionId,
+          started_at: new Date().toISOString(),
+          last_checked_at: new Date().toISOString(),
+        })
+      );
+
+      const output = runScript({
+        directory: tempDir,
+        sessionId,
+        stop_reason: "ScheduleWakeup",
       });
       expect(output.continue).toBe(true);
     });
