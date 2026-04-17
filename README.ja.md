@@ -15,7 +15,7 @@
 
 *Claude Code を学ぶ必要はありません。OMC を使うだけ。*
 
-[はじめる](#クイックスタート) • [ドキュメント](https://yeachan-heo.github.io/oh-my-claudecode-website) • [CLI リファレンス](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#cli-reference) • [ワークフロー](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#workflows) • [移行ガイド](docs/MIGRATION.md)
+[はじめる](#クイックスタート) • [ドキュメント](https://yeachan-heo.github.io/oh-my-claudecode-website) • [CLI リファレンス](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#cli-reference) • [ワークフロー](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#workflows) • [移行ガイド](docs/MIGRATION.md) • [Discord](https://discord.gg/PUwSMR9XNk)
 
 ---
 

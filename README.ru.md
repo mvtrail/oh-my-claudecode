@@ -13,7 +13,7 @@
 
 _Не изучайте Claude Code. Просто используйте OMC._
 
-[Начать](#быстрый-старт) • [Документация](https://yeachan-heo.github.io/oh-my-claudecode-website) • [Руководство по миграции](docs/MIGRATION.md)
+[Начать](#быстрый-старт) • [Документация](https://yeachan-heo.github.io/oh-my-claudecode-website) • [Руководство по миграции](docs/MIGRATION.md) • [Discord](https://discord.gg/PUwSMR9XNk)
 
 ---
 

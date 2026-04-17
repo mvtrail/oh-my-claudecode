@@ -15,7 +15,7 @@
 
 *Claude Code를 배우지 마세요. 그냥 OMC를 쓰세요.*
 
-[시작하기](#빠른-시작) • [문서](https://yeachan-heo.github.io/oh-my-claudecode-website) • [CLI 레퍼런스](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#cli-reference) • [워크플로우](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#workflows) • [마이그레이션 가이드](docs/MIGRATION.md)
+[시작하기](#빠른-시작) • [문서](https://yeachan-heo.github.io/oh-my-claudecode-website) • [CLI 레퍼런스](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#cli-reference) • [워크플로우](https://yeachan-heo.github.io/oh-my-claudecode-website/docs.html#workflows) • [마이그레이션 가이드](docs/MIGRATION.md) • [Discord](https://discord.gg/PUwSMR9XNk)
 
 ---
 
