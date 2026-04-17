@@ -280,9 +280,34 @@ Defaults → User config (~/.config/claude-omc/config.jsonc)
     "search": ["search", "find", "locate"],
     "analyze": ["analyze", "investigate", "examine"],
     "ultrathink": ["ultrathink", "think", "reason"]
+  },
+
+  // Optional prompt-level company context contract
+  "companyContext": {
+    "tool": "mcp__vendor__get_company_context",
+    "onError": "warn"
   }
 }
 ```
+
+### Company context via MCP
+
+If your organization exposes internal guidance through a custom MCP server, configure the selected tool in OMC's standard config files:
+
+```jsonc
+{
+  "companyContext": {
+    "tool": "mcp__vendor__get_company_context",
+    "onError": "warn"
+  }
+}
+```
+
+- Register the MCP server itself through the normal Claude/OMC MCP setup flow.
+- `tool` is the full MCP tool name.
+- `onError` controls prompt-level fallback: `warn` (default), `silent`, or `fail`.
+
+This is an advisory workflow contract, not runtime enforcement. See [company-context-interface.md](./company-context-interface.md) for the full contract.
 
 ### Overriding agent models
 
