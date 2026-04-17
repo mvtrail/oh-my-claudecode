@@ -99,7 +99,7 @@ This contract does not change how MCP servers are registered.
 
 For a tiny runnable reference implementation, see:
 
-- [`examples/vendor-mcp-server/README.md`](/mnt/offloading/Workspace/oh-my-claudecode.omx-worktrees/issue-2692-company-context-mcp-interface/examples/vendor-mcp-server/README.md)
+- [`examples/vendor-mcp-server/README.md`](../examples/vendor-mcp-server/README.md)
 
 ## Residual Risk
 
