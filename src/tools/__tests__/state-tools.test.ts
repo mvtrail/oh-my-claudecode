@@ -398,6 +398,21 @@ describe('state-tools', () => {
       expect(result.content[0].text).toContain('deep-interview');
     });
 
+    it('should include self-improve mode when self-improve state is active', async () => {
+      await stateWriteTool.handler({
+        mode: 'self-improve',
+        active: true,
+        state: { tournament_round: 1 },
+        workingDirectory: TEST_DIR,
+      });
+
+      const result = await stateListActiveTool.handler({
+        workingDirectory: TEST_DIR,
+      });
+
+      expect(result.content[0].text).toContain('self-improve');
+    });
+
     it('should include team in status output when team state is active', async () => {
       await stateWriteTool.handler({
         mode: 'team',
@@ -413,6 +428,206 @@ describe('state-tools', () => {
 
       expect(result.content[0].text).toContain('Status: team');
       expect(result.content[0].text).toContain('**Active:** Yes');
+    });
+
+    it('deep-interview and self-improve appear in all-mode status listing', async () => {
+      const result = await stateGetStatusTool.handler({
+        workingDirectory: TEST_DIR,
+      });
+
+      expect(result.content[0].text).toContain('deep-interview');
+      expect(result.content[0].text).toContain('self-improve');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Registry parity: deep-interview and self-improve as first-class modes
+  // -----------------------------------------------------------------------
+  describe('deep-interview and self-improve registry parity (T1)', () => {
+    it('writes deep-interview state to session-scoped path via MODE_CONFIGS routing', async () => {
+      const sessionId = 'di-registry-write';
+      await stateWriteTool.handler({
+        mode: 'deep-interview',
+        active: true,
+        state: { current_phase: 'questioning', round: 3 },
+        session_id: sessionId,
+        workingDirectory: TEST_DIR,
+      });
+
+      const statePath = join(TEST_DIR, '.omc', 'state', 'sessions', sessionId, 'deep-interview-state.json');
+      expect(existsSync(statePath)).toBe(true);
+    });
+
+    it('writes self-improve state to session-scoped path via MODE_CONFIGS routing', async () => {
+      const sessionId = 'si-registry-write';
+      await stateWriteTool.handler({
+        mode: 'self-improve',
+        active: true,
+        state: { tournament_round: 1, best_score: 0.85 },
+        session_id: sessionId,
+        workingDirectory: TEST_DIR,
+      });
+
+      const statePath = join(TEST_DIR, '.omc', 'state', 'sessions', sessionId, 'self-improve-state.json');
+      expect(existsSync(statePath)).toBe(true);
+    });
+
+    it('reads deep-interview state back from session-scoped path', async () => {
+      const sessionId = 'di-registry-read';
+      await stateWriteTool.handler({
+        mode: 'deep-interview',
+        active: true,
+        state: { current_phase: 'questioning', ambiguity_score: 0.34 },
+        session_id: sessionId,
+        workingDirectory: TEST_DIR,
+      });
+
+      const result = await stateReadTool.handler({
+        mode: 'deep-interview',
+        session_id: sessionId,
+        workingDirectory: TEST_DIR,
+      });
+
+      expect(result.content[0].text).toContain('current_phase');
+      expect(result.content[0].text).toContain('ambiguity_score');
+    });
+
+    it('reads self-improve state back from session-scoped path', async () => {
+      const sessionId = 'si-registry-read';
+      await stateWriteTool.handler({
+        mode: 'self-improve',
+        active: true,
+        state: { tournament_round: 2, generation: 5 },
+        session_id: sessionId,
+        workingDirectory: TEST_DIR,
+      });
+
+      const result = await stateReadTool.handler({
+        mode: 'self-improve',
+        session_id: sessionId,
+        workingDirectory: TEST_DIR,
+      });
+
+      expect(result.content[0].text).toContain('tournament_round');
+      expect(result.content[0].text).toContain('generation');
+    });
+
+    it('clears deep-interview state file for given session', async () => {
+      const sessionId = 'di-registry-clear';
+      await stateWriteTool.handler({
+        mode: 'deep-interview',
+        active: true,
+        state: { current_phase: 'analysis' },
+        session_id: sessionId,
+        workingDirectory: TEST_DIR,
+      });
+
+      const clearResult = await stateClearTool.handler({
+        mode: 'deep-interview',
+        session_id: sessionId,
+        workingDirectory: TEST_DIR,
+      });
+
+      expect(clearResult.content[0].text).toMatch(/cleared|Successfully/i);
+      const statePath = join(TEST_DIR, '.omc', 'state', 'sessions', sessionId, 'deep-interview-state.json');
+      expect(existsSync(statePath)).toBe(false);
+    });
+
+    it('clears self-improve state file for given session', async () => {
+      const sessionId = 'si-registry-clear';
+      await stateWriteTool.handler({
+        mode: 'self-improve',
+        active: true,
+        state: { tournament_round: 3 },
+        session_id: sessionId,
+        workingDirectory: TEST_DIR,
+      });
+
+      const clearResult = await stateClearTool.handler({
+        mode: 'self-improve',
+        session_id: sessionId,
+        workingDirectory: TEST_DIR,
+      });
+
+      expect(clearResult.content[0].text).toMatch(/cleared|Successfully/i);
+      const statePath = join(TEST_DIR, '.omc', 'state', 'sessions', sessionId, 'self-improve-state.json');
+      expect(existsSync(statePath)).toBe(false);
+    });
+
+    it('state_get_status reports self-improve as active when state file is present', async () => {
+      await stateWriteTool.handler({
+        mode: 'self-improve',
+        active: true,
+        state: { tournament_round: 2 },
+        workingDirectory: TEST_DIR,
+      });
+
+      const result = await stateGetStatusTool.handler({
+        mode: 'self-improve',
+        workingDirectory: TEST_DIR,
+      });
+
+      expect(result.content[0].text).toContain('Status: self-improve');
+      expect(result.content[0].text).toContain('**Active:** Yes');
+    });
+
+    it('state_get_status reports deep-interview as active when state file is present', async () => {
+      await stateWriteTool.handler({
+        mode: 'deep-interview',
+        active: true,
+        state: { current_phase: 'contrarian' },
+        workingDirectory: TEST_DIR,
+      });
+
+      const result = await stateGetStatusTool.handler({
+        mode: 'deep-interview',
+        workingDirectory: TEST_DIR,
+      });
+
+      expect(result.content[0].text).toContain('Status: deep-interview');
+      expect(result.content[0].text).toContain('**Active:** Yes');
+    });
+
+    it('deep-interview session isolation: write to session A does not appear under session B', async () => {
+      const sessionA = 'di-iso-a';
+      const sessionB = 'di-iso-b';
+
+      await stateWriteTool.handler({
+        mode: 'deep-interview',
+        active: true,
+        state: { current_phase: 'questioning' },
+        session_id: sessionA,
+        workingDirectory: TEST_DIR,
+      });
+
+      const resultB = await stateReadTool.handler({
+        mode: 'deep-interview',
+        session_id: sessionB,
+        workingDirectory: TEST_DIR,
+      });
+
+      expect(resultB.content[0].text).toContain('No state found');
+    });
+
+    it('self-improve session isolation: write to session A does not appear under session B', async () => {
+      const sessionA = 'si-iso-a';
+      const sessionB = 'si-iso-b';
+
+      await stateWriteTool.handler({
+        mode: 'self-improve',
+        active: true,
+        state: { tournament_round: 1 },
+        session_id: sessionA,
+        workingDirectory: TEST_DIR,
+      });
+
+      const resultB = await stateReadTool.handler({
+        mode: 'self-improve',
+        session_id: sessionB,
+        workingDirectory: TEST_DIR,
+      });
+
+      expect(resultB.content[0].text).toContain('No state found');
     });
   });
 

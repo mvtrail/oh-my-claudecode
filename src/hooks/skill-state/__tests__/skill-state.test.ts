@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
@@ -11,7 +11,18 @@ import {
   clearSkillActiveState,
   isSkillStateStale,
   checkSkillActiveState,
+  readSkillActiveStateNormalized,
+  writeSkillActiveStateCopies,
+  upsertWorkflowSkillSlot,
+  markWorkflowSkillCompleted,
+  clearWorkflowSkillSlot,
+  pruneExpiredWorkflowSkillTombstones,
+  resolveAuthoritativeWorkflowSkill,
+  emptySkillActiveStateV2,
+  WORKFLOW_TOMBSTONE_TTL_MS,
   type SkillActiveState,
+  type SkillActiveStateV2,
+  type ActiveSkillSlot,
 } from '../index.js';
 
 function makeTempDir(): string {
@@ -545,6 +556,604 @@ describe('skill-state', () => {
       // 6. Stop hook no longer blocks
       const finalCheck = checkSkillActiveState(tempDir, 'session-1');
       expect(finalCheck.shouldBlock).toBe(false);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // writeSkillActiveStateCopies — dual-write invariant (spec a/b)
+  // -----------------------------------------------------------------------
+  describe('writeSkillActiveStateCopies — dual-write invariant (spec a/b)', () => {
+    const rootFilePath = (dir: string) => join(dir, '.omc', 'state', 'skill-active-state.json');
+    const sessionFilePath = (dir: string, sid: string) =>
+      join(dir, '.omc', 'state', 'sessions', sid, 'skill-active-state.json');
+
+    it('writes both root and session copies on seed', () => {
+      const sessionId = 'dwc-seed-01';
+      const state = upsertWorkflowSkillSlot(emptySkillActiveStateV2(), 'ralph', {
+        session_id: sessionId,
+        mode_state_path: 'ralph-state.json',
+        initialized_mode: 'ralph',
+        initialized_state_path: rootFilePath(tempDir),
+        initialized_session_state_path: sessionFilePath(tempDir, sessionId),
+      });
+
+      writeSkillActiveStateCopies(tempDir, state, sessionId);
+
+      expect(existsSync(rootFilePath(tempDir))).toBe(true);
+      expect(existsSync(sessionFilePath(tempDir, sessionId))).toBe(true);
+    });
+
+    it('both copies contain identical slot content after seed', () => {
+      const sessionId = 'dwc-parity-01';
+      const state = upsertWorkflowSkillSlot(emptySkillActiveStateV2(), 'autopilot', {
+        session_id: sessionId,
+        mode_state_path: 'autopilot-state.json',
+        initialized_mode: 'autopilot',
+        initialized_state_path: rootFilePath(tempDir),
+        initialized_session_state_path: sessionFilePath(tempDir, sessionId),
+      });
+
+      writeSkillActiveStateCopies(tempDir, state, sessionId);
+
+      const root = JSON.parse(readFileSync(rootFilePath(tempDir), 'utf-8')) as SkillActiveStateV2;
+      const session = JSON.parse(readFileSync(sessionFilePath(tempDir, sessionId), 'utf-8')) as SkillActiveStateV2;
+
+      expect(root.active_skills['autopilot']).toBeDefined();
+      expect(session.active_skills['autopilot']).toBeDefined();
+      expect(root.active_skills['autopilot']?.session_id).toBe(sessionId);
+      expect(session.active_skills['autopilot']?.session_id).toBe(sessionId);
+    });
+
+    it('writes only root copy when sessionId is omitted', () => {
+      const state = upsertWorkflowSkillSlot(emptySkillActiveStateV2(), 'ralph', {
+        session_id: 'anon',
+        mode_state_path: 'ralph-state.json',
+        initialized_mode: 'ralph',
+        initialized_state_path: rootFilePath(tempDir),
+        initialized_session_state_path: '',
+      });
+
+      writeSkillActiveStateCopies(tempDir, state);
+
+      expect(existsSync(rootFilePath(tempDir))).toBe(true);
+      expect(existsSync(join(tempDir, '.omc', 'state', 'sessions'))).toBe(false);
+    });
+
+    it('both copies reflect tombstone after markWorkflowSkillCompleted (spec b)', () => {
+      const sessionId = 'dwc-tomb-01';
+      const seeded = upsertWorkflowSkillSlot(emptySkillActiveStateV2(), 'ralph', {
+        session_id: sessionId,
+        mode_state_path: 'ralph-state.json',
+        initialized_mode: 'ralph',
+        initialized_state_path: rootFilePath(tempDir),
+        initialized_session_state_path: sessionFilePath(tempDir, sessionId),
+      });
+      writeSkillActiveStateCopies(tempDir, seeded, sessionId);
+
+      const tombstoneTime = '2026-04-17T10:00:00.000Z';
+      const tombstoned = markWorkflowSkillCompleted(seeded, 'ralph', tombstoneTime);
+      writeSkillActiveStateCopies(tempDir, tombstoned, sessionId);
+
+      const root = JSON.parse(readFileSync(rootFilePath(tempDir), 'utf-8')) as SkillActiveStateV2;
+      const session = JSON.parse(readFileSync(sessionFilePath(tempDir, sessionId), 'utf-8')) as SkillActiveStateV2;
+
+      expect(root.active_skills['ralph']?.completed_at).toBe(tombstoneTime);
+      expect(session.active_skills['ralph']?.completed_at).toBe(tombstoneTime);
+    });
+
+    it('removes both files when all slots cleared (spec b cancel)', () => {
+      const sessionId = 'dwc-cancel-01';
+      const seeded = upsertWorkflowSkillSlot(emptySkillActiveStateV2(), 'ralph', {
+        session_id: sessionId,
+        mode_state_path: 'ralph-state.json',
+        initialized_mode: 'ralph',
+        initialized_state_path: rootFilePath(tempDir),
+        initialized_session_state_path: sessionFilePath(tempDir, sessionId),
+      });
+      writeSkillActiveStateCopies(tempDir, seeded, sessionId);
+
+      expect(existsSync(rootFilePath(tempDir))).toBe(true);
+      expect(existsSync(sessionFilePath(tempDir, sessionId))).toBe(true);
+
+      const cleared = clearWorkflowSkillSlot(seeded, 'ralph');
+      writeSkillActiveStateCopies(tempDir, cleared, sessionId);
+
+      expect(existsSync(rootFilePath(tempDir))).toBe(false);
+      expect(existsSync(sessionFilePath(tempDir, sessionId))).toBe(false);
+    });
+
+    it('returns true on successful dual-write', () => {
+      const sessionId = 'dwc-ok-01';
+      const state = upsertWorkflowSkillSlot(emptySkillActiveStateV2(), 'ultrawork', {
+        session_id: sessionId,
+        mode_state_path: 'ultrawork-state.json',
+        initialized_mode: 'ultrawork',
+        initialized_state_path: rootFilePath(tempDir),
+        initialized_session_state_path: sessionFilePath(tempDir, sessionId),
+      });
+
+      const result = writeSkillActiveStateCopies(tempDir, state, sessionId);
+      expect(result).toBe(true);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // readSkillActiveStateNormalized — v1 scalar + v2 normalization (spec a)
+  // -----------------------------------------------------------------------
+  describe('readSkillActiveStateNormalized — normalization and session authority', () => {
+    it('returns empty v2 when no files exist', () => {
+      const state = readSkillActiveStateNormalized(tempDir, 'no-session');
+      expect(state.version).toBe(2);
+      expect(Object.keys(state.active_skills)).toHaveLength(0);
+    });
+
+    it('normalizes v1 scalar payload into support_skill branch', () => {
+      const stateDir = join(tempDir, '.omc', 'state');
+      mkdirSync(stateDir, { recursive: true });
+      const v1 = {
+        active: true,
+        skill_name: 'plan',
+        session_id: 'v1-sess',
+        started_at: new Date().toISOString(),
+        last_checked_at: new Date().toISOString(),
+        reinforcement_count: 0,
+        max_reinforcements: 5,
+        stale_ttl_ms: 15 * 60 * 1000,
+      };
+      writeFileSync(join(stateDir, 'skill-active-state.json'), JSON.stringify(v1, null, 2));
+
+      const normalized = readSkillActiveStateNormalized(tempDir);
+      expect(normalized.version).toBe(2);
+      expect(normalized.support_skill?.skill_name).toBe('plan');
+      expect(Object.keys(normalized.active_skills)).toHaveLength(0);
+    });
+
+    it('session copy is authoritative for session-local reads', () => {
+      const sessionId = 'norm-auth-01';
+      const rootDir = join(tempDir, '.omc', 'state');
+      const sessionDir = join(rootDir, 'sessions', sessionId);
+      mkdirSync(rootDir, { recursive: true });
+      mkdirSync(sessionDir, { recursive: true });
+
+      const rootState: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'autopilot': {
+            skill_name: 'autopilot',
+            started_at: '2026-01-01T00:00:00Z',
+            completed_at: null,
+            session_id: 'other-session',
+            mode_state_path: '',
+            initialized_mode: 'autopilot',
+            initialized_state_path: '',
+            initialized_session_state_path: '',
+          },
+        },
+      };
+      const sessionState: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'ralph': {
+            skill_name: 'ralph',
+            started_at: '2026-01-01T00:00:00Z',
+            completed_at: null,
+            session_id: sessionId,
+            mode_state_path: '',
+            initialized_mode: 'ralph',
+            initialized_state_path: '',
+            initialized_session_state_path: '',
+          },
+        },
+      };
+      writeFileSync(join(rootDir, 'skill-active-state.json'), JSON.stringify(rootState));
+      writeFileSync(join(sessionDir, 'skill-active-state.json'), JSON.stringify(sessionState));
+
+      const result = readSkillActiveStateNormalized(tempDir, sessionId);
+      expect(result.active_skills['ralph']).toBeDefined();
+      expect(result.active_skills['autopilot']).toBeUndefined();
+    });
+
+    it('returns empty state when sessionId provided but no session copy exists (no cross-session leak)', () => {
+      const rootDir = join(tempDir, '.omc', 'state');
+      mkdirSync(rootDir, { recursive: true });
+      const rootState: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'ralph': {
+            skill_name: 'ralph',
+            started_at: '2026-01-01T00:00:00Z',
+            completed_at: null,
+            session_id: 'root-only',
+            mode_state_path: '',
+            initialized_mode: 'ralph',
+            initialized_state_path: '',
+            initialized_session_state_path: '',
+          },
+        },
+      };
+      writeFileSync(join(rootDir, 'skill-active-state.json'), JSON.stringify(rootState));
+
+      const result = readSkillActiveStateNormalized(tempDir, 'different-session');
+      expect(Object.keys(result.active_skills)).toHaveLength(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // pruneExpiredWorkflowSkillTombstones — TTL sweep (spec c)
+  // -----------------------------------------------------------------------
+  describe('pruneExpiredWorkflowSkillTombstones — TTL sweep (spec c)', () => {
+    const makeSlot = (skillName: string, completedAt?: string | null): ActiveSkillSlot => ({
+      skill_name: skillName,
+      started_at: '2026-04-17T00:00:00.000Z',
+      completed_at: completedAt ?? null,
+      session_id: 'prune-session',
+      mode_state_path: `${skillName}-state.json`,
+      initialized_mode: skillName,
+      initialized_state_path: '',
+      initialized_session_state_path: '',
+    });
+
+    it('removes tombstoned slots past TTL', () => {
+      const past = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(); // 25h ago
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: { 'ralph': makeSlot('ralph', past) },
+      };
+      const pruned = pruneExpiredWorkflowSkillTombstones(state, WORKFLOW_TOMBSTONE_TTL_MS);
+      expect(pruned.active_skills['ralph']).toBeUndefined();
+    });
+
+    it('keeps tombstoned slots within TTL', () => {
+      const recent = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(); // 1h ago
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: { 'ralph': makeSlot('ralph', recent) },
+      };
+      const pruned = pruneExpiredWorkflowSkillTombstones(state, WORKFLOW_TOMBSTONE_TTL_MS);
+      expect(pruned.active_skills['ralph']).toBeDefined();
+    });
+
+    it('never removes live (non-tombstoned) slots', () => {
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: { 'autopilot': makeSlot('autopilot') },
+      };
+      const pruned = pruneExpiredWorkflowSkillTombstones(state);
+      expect(pruned.active_skills['autopilot']).toBeDefined();
+    });
+
+    it('prunes only stale tombstones, keeps fresh tombstones and live slots', () => {
+      const old = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+      const fresh = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'ralph': makeSlot('ralph', old),
+          'autopilot': makeSlot('autopilot', fresh),
+          'ultrawork': makeSlot('ultrawork'),
+        },
+      };
+      const pruned = pruneExpiredWorkflowSkillTombstones(state);
+      expect(pruned.active_skills['ralph']).toBeUndefined();
+      expect(pruned.active_skills['autopilot']).toBeDefined();
+      expect(pruned.active_skills['ultrawork']).toBeDefined();
+    });
+
+    it('returns same reference when nothing changed', () => {
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: { 'autopilot': makeSlot('autopilot') },
+      };
+      const pruned = pruneExpiredWorkflowSkillTombstones(state);
+      expect(pruned).toBe(state);
+    });
+
+    it('keeps slot with malformed completed_at defensively', () => {
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: { 'ralph': { ...makeSlot('ralph'), completed_at: 'not-a-date' } },
+      };
+      const pruned = pruneExpiredWorkflowSkillTombstones(state);
+      expect(pruned.active_skills['ralph']).toBeDefined();
+    });
+
+    it('WORKFLOW_TOMBSTONE_TTL_MS equals 24 hours', () => {
+      expect(WORKFLOW_TOMBSTONE_TTL_MS).toBe(24 * 60 * 60 * 1000);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // resolveAuthoritativeWorkflowSkill — nested lineage (spec f)
+  // -----------------------------------------------------------------------
+  describe('resolveAuthoritativeWorkflowSkill — nested lineage (spec f)', () => {
+    const makeSlot = (skillName: string, opts: Partial<ActiveSkillSlot> = {}): ActiveSkillSlot => ({
+      skill_name: skillName,
+      started_at: new Date().toISOString(),
+      completed_at: null,
+      session_id: 'nest-session',
+      mode_state_path: `${skillName}-state.json`,
+      initialized_mode: skillName,
+      initialized_state_path: '',
+      initialized_session_state_path: '',
+      ...opts,
+    });
+
+    it('returns null when no slots', () => {
+      expect(resolveAuthoritativeWorkflowSkill(emptySkillActiveStateV2())).toBeNull();
+    });
+
+    it('returns null when all slots are tombstoned', () => {
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'ralph': makeSlot('ralph', { completed_at: '2026-04-17T00:00:00Z' }),
+        },
+      };
+      expect(resolveAuthoritativeWorkflowSkill(state)).toBeNull();
+    });
+
+    it('returns the single live slot', () => {
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: { 'ralph': makeSlot('ralph') },
+      };
+      expect(resolveAuthoritativeWorkflowSkill(state)?.skill_name).toBe('ralph');
+    });
+
+    it('returns autopilot (outer root) while ralph (child) is live beneath it', () => {
+      const autopilotStarted = new Date(Date.now() - 5000).toISOString();
+      const ralphStarted = new Date().toISOString();
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'autopilot': makeSlot('autopilot', { started_at: autopilotStarted }),
+          'ralph': makeSlot('ralph', { parent_skill: 'autopilot', started_at: ralphStarted }),
+        },
+      };
+      const result = resolveAuthoritativeWorkflowSkill(state);
+      expect(result?.skill_name).toBe('autopilot');
+    });
+
+    it('ralph tombstone does not affect autopilot; autopilot stays authoritative', () => {
+      const autopilotStarted = new Date(Date.now() - 5000).toISOString();
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'autopilot': makeSlot('autopilot', { started_at: autopilotStarted }),
+          'ralph': makeSlot('ralph', { parent_skill: 'autopilot', completed_at: '2026-04-17T00:00:00Z' }),
+        },
+      };
+      const result = resolveAuthoritativeWorkflowSkill(state);
+      expect(result?.skill_name).toBe('autopilot');
+      expect(result?.completed_at).toBeFalsy();
+    });
+
+    it('autopilot completed_at stays unset while ralph is active beneath it (spec f invariant)', () => {
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'autopilot': makeSlot('autopilot'),
+          'ralph': makeSlot('ralph', { parent_skill: 'autopilot' }),
+        },
+      };
+      expect(state.active_skills['autopilot']?.completed_at).toBeFalsy();
+      expect(resolveAuthoritativeWorkflowSkill(state)?.skill_name).toBe('autopilot');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Diverged-copy reconciliation (spec d)
+  // -----------------------------------------------------------------------
+  describe('diverged-copy reconciliation (spec d)', () => {
+    const rootFilePath = (dir: string) => join(dir, '.omc', 'state', 'skill-active-state.json');
+    const sessionFilePath = (dir: string, sid: string) =>
+      join(dir, '.omc', 'state', 'sessions', sid, 'skill-active-state.json');
+
+    it('session copy is authoritative when root and session copies diverge', () => {
+      const sessionId = 'drift-auth-01';
+      const rootDir = join(tempDir, '.omc', 'state');
+      const sessionDir = join(rootDir, 'sessions', sessionId);
+      mkdirSync(rootDir, { recursive: true });
+      mkdirSync(sessionDir, { recursive: true });
+
+      const baseSlot: ActiveSkillSlot = {
+        skill_name: 'ralph',
+        started_at: '2026-04-17T00:00:00Z',
+        completed_at: null,
+        session_id: sessionId,
+        mode_state_path: 'ralph-state.json',
+        initialized_mode: 'ralph',
+        initialized_state_path: rootFilePath(tempDir),
+        initialized_session_state_path: sessionFilePath(tempDir, sessionId),
+      };
+      const staleRootState: SkillActiveStateV2 = { version: 2, active_skills: { 'ralph': baseSlot } };
+      const freshSessionState: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: { 'ralph': { ...baseSlot, last_confirmed_at: '2026-04-17T01:00:00Z' } },
+      };
+      writeFileSync(rootFilePath(tempDir), JSON.stringify(staleRootState));
+      writeFileSync(sessionFilePath(tempDir, sessionId), JSON.stringify(freshSessionState));
+
+      const result = readSkillActiveStateNormalized(tempDir, sessionId);
+      expect(result.active_skills['ralph']?.last_confirmed_at).toBe('2026-04-17T01:00:00Z');
+    });
+
+    it('next writeSkillActiveStateCopies re-syncs diverged copies', () => {
+      const sessionId = 'drift-resync-01';
+      const rootDir = join(tempDir, '.omc', 'state');
+      const sessionDir = join(rootDir, 'sessions', sessionId);
+      mkdirSync(rootDir, { recursive: true });
+      mkdirSync(sessionDir, { recursive: true });
+
+      const baseSlot: ActiveSkillSlot = {
+        skill_name: 'ralph',
+        started_at: '2026-04-17T00:00:00Z',
+        completed_at: null,
+        session_id: sessionId,
+        mode_state_path: 'ralph-state.json',
+        initialized_mode: 'ralph',
+        initialized_state_path: rootFilePath(tempDir),
+        initialized_session_state_path: sessionFilePath(tempDir, sessionId),
+      };
+      writeFileSync(rootFilePath(tempDir), JSON.stringify({ version: 2, active_skills: { 'ralph': baseSlot } }));
+      writeFileSync(sessionFilePath(tempDir, sessionId), JSON.stringify({
+        version: 2,
+        active_skills: { 'ralph': { ...baseSlot, last_confirmed_at: '2026-04-17T01:00:00Z' } },
+      }));
+
+      // Next mutation: tombstone via session-authoritative read → dual-write reconciles
+      const current = readSkillActiveStateNormalized(tempDir, sessionId);
+      const tombstoned = markWorkflowSkillCompleted(current, 'ralph');
+      writeSkillActiveStateCopies(tempDir, tombstoned, sessionId);
+
+      const rootAfter = JSON.parse(readFileSync(rootFilePath(tempDir), 'utf-8')) as SkillActiveStateV2;
+      const sessionAfter = JSON.parse(readFileSync(sessionFilePath(tempDir, sessionId), 'utf-8')) as SkillActiveStateV2;
+      expect(rootAfter.active_skills['ralph']?.completed_at).toBeTruthy();
+      expect(sessionAfter.active_skills['ralph']?.completed_at).toBeTruthy();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Pure workflow-slot helpers — unit tests
+  // -----------------------------------------------------------------------
+  describe('upsertWorkflowSkillSlot — pure helper', () => {
+    it('creates a new slot with provided fields', () => {
+      const state = upsertWorkflowSkillSlot(emptySkillActiveStateV2(), 'ralph', {
+        session_id: 's1',
+        mode_state_path: 'r.json',
+        initialized_mode: 'ralph',
+        initialized_state_path: '',
+        initialized_session_state_path: '',
+      });
+      expect(state.active_skills['ralph']?.skill_name).toBe('ralph');
+      expect(state.active_skills['ralph']?.session_id).toBe('s1');
+    });
+
+    it('preserves started_at on re-upsert (idempotent seed)', () => {
+      const seeded = upsertWorkflowSkillSlot(emptySkillActiveStateV2(), 'ralph', {
+        session_id: 's1',
+        started_at: '2026-01-01T00:00:00Z',
+        mode_state_path: 'r.json',
+        initialized_mode: 'ralph',
+        initialized_state_path: '',
+        initialized_session_state_path: '',
+      });
+      const confirmed = upsertWorkflowSkillSlot(seeded, 'ralph', {
+        last_confirmed_at: '2026-04-17T00:00:00Z',
+      });
+      expect(confirmed.active_skills['ralph']?.started_at).toBe('2026-01-01T00:00:00Z');
+      expect(confirmed.active_skills['ralph']?.last_confirmed_at).toBe('2026-04-17T00:00:00Z');
+    });
+
+    it('strips oh-my-claudecode: prefix from skill name', () => {
+      const state = upsertWorkflowSkillSlot(emptySkillActiveStateV2(), 'oh-my-claudecode:ralph', {
+        session_id: 's1',
+        mode_state_path: 'r.json',
+        initialized_mode: 'ralph',
+        initialized_state_path: '',
+        initialized_session_state_path: '',
+      });
+      expect(state.active_skills['ralph']).toBeDefined();
+      expect(state.active_skills['oh-my-claudecode:ralph']).toBeUndefined();
+    });
+
+    it('does not mutate the original state object', () => {
+      const original = emptySkillActiveStateV2();
+      upsertWorkflowSkillSlot(original, 'ralph', {
+        session_id: 's1',
+        mode_state_path: 'r.json',
+        initialized_mode: 'ralph',
+        initialized_state_path: '',
+        initialized_session_state_path: '',
+      });
+      expect(Object.keys(original.active_skills)).toHaveLength(0);
+    });
+  });
+
+  describe('markWorkflowSkillCompleted — pure helper', () => {
+    it('sets completed_at to provided timestamp', () => {
+      const ts = '2026-04-17T12:00:00.000Z';
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'ralph': {
+            skill_name: 'ralph', started_at: '2026-04-17T00:00:00Z', completed_at: null,
+            session_id: 's1', mode_state_path: '', initialized_mode: 'ralph',
+            initialized_state_path: '', initialized_session_state_path: '',
+          },
+        },
+      };
+      const tombstoned = markWorkflowSkillCompleted(state, 'ralph', ts);
+      expect(tombstoned.active_skills['ralph']?.completed_at).toBe(ts);
+    });
+
+    it('returns state unchanged when slot is absent (idempotent)', () => {
+      const state = emptySkillActiveStateV2();
+      const result = markWorkflowSkillCompleted(state, 'ralph');
+      expect(result).toBe(state);
+    });
+
+    it('does not tombstone sibling slots', () => {
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'ralph': {
+            skill_name: 'ralph', started_at: '2026-04-17T00:00:00Z', completed_at: null,
+            session_id: 's1', mode_state_path: '', initialized_mode: 'ralph',
+            initialized_state_path: '', initialized_session_state_path: '',
+          },
+          'autopilot': {
+            skill_name: 'autopilot', started_at: '2026-04-17T00:00:00Z', completed_at: null,
+            session_id: 's1', mode_state_path: '', initialized_mode: 'autopilot',
+            initialized_state_path: '', initialized_session_state_path: '',
+          },
+        },
+      };
+      const tombstoned = markWorkflowSkillCompleted(state, 'ralph');
+      expect(tombstoned.active_skills['autopilot']?.completed_at).toBeFalsy();
+    });
+  });
+
+  describe('clearWorkflowSkillSlot — pure helper', () => {
+    it('removes the slot entirely', () => {
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'ralph': {
+            skill_name: 'ralph', started_at: '2026-04-17T00:00:00Z', completed_at: null,
+            session_id: 's1', mode_state_path: '', initialized_mode: 'ralph',
+            initialized_state_path: '', initialized_session_state_path: '',
+          },
+        },
+      };
+      const cleared = clearWorkflowSkillSlot(state, 'ralph');
+      expect(cleared.active_skills['ralph']).toBeUndefined();
+    });
+
+    it('is idempotent when slot is absent', () => {
+      const state = emptySkillActiveStateV2();
+      const result = clearWorkflowSkillSlot(state, 'ralph');
+      expect(result).toBe(state);
+    });
+
+    it('does not remove sibling slots', () => {
+      const state: SkillActiveStateV2 = {
+        version: 2,
+        active_skills: {
+          'ralph': {
+            skill_name: 'ralph', started_at: '2026-04-17T00:00:00Z', completed_at: null,
+            session_id: 's1', mode_state_path: '', initialized_mode: 'ralph',
+            initialized_state_path: '', initialized_session_state_path: '',
+          },
+          'autopilot': {
+            skill_name: 'autopilot', started_at: '2026-04-17T00:00:00Z', completed_at: null,
+            session_id: 's1', mode_state_path: '', initialized_mode: 'autopilot',
+            initialized_state_path: '', initialized_session_state_path: '',
+          },
+        },
+      };
+      const cleared = clearWorkflowSkillSlot(state, 'ralph');
+      expect(cleared.active_skills['autopilot']).toBeDefined();
     });
   });
 });

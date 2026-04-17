@@ -687,4 +687,42 @@ describe('Skill active state cleanup on PostToolUse (issue #2103)', () => {
       expect(typeof state.completed_at).toBe('string');
     });
   });
+
+  it('clears skill-active-state when deep-interview Skill completes', () => {
+    withTempDir((tempDir) => {
+      const sessionId = 'deep-interview-complete-01';
+      writeSkillStateFixtures(tempDir, sessionId, 'deep-interview');
+
+      const out = runPostToolVerifier({
+        tool_name: 'Skill',
+        tool_input: { skill: 'oh-my-claudecode:deep-interview' },
+        tool_response: { ok: true },
+        session_id: sessionId,
+        cwd: tempDir,
+      });
+
+      expect(out).toEqual({ continue: true, suppressOutput: true });
+      expect(existsSync(skillStatePath(tempDir, sessionId))).toBe(false);
+      expect(existsSync(legacySkillStatePath(tempDir))).toBe(false);
+    });
+  });
+
+  it('clears skill-active-state when self-improve Skill completes', () => {
+    withTempDir((tempDir) => {
+      const sessionId = 'self-improve-complete-01';
+      writeSkillStateFixtures(tempDir, sessionId, 'self-improve');
+
+      const out = runPostToolVerifier({
+        tool_name: 'Skill',
+        tool_input: { skill: 'oh-my-claudecode:self-improve' },
+        tool_response: { ok: true },
+        session_id: sessionId,
+        cwd: tempDir,
+      });
+
+      expect(out).toEqual({ continue: true, suppressOutput: true });
+      expect(existsSync(skillStatePath(tempDir, sessionId))).toBe(false);
+      expect(existsSync(legacySkillStatePath(tempDir))).toBe(false);
+    });
+  });
 });

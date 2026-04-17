@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { removeCodeBlocks, sanitizeForKeywordDetection, extractPromptText, detectKeywordsWithType, hasKeyword, getPrimaryKeyword, getAllKeywords, getAllKeywordsWithSizeCheck, isUnderspecifiedForExecution, applyRalplanGate, NON_LATIN_SCRIPT_PATTERN, } from '../index.js';
+import { removeCodeBlocks, sanitizeForKeywordDetection, extractPromptText, detectKeywordsWithType, hasKeyword, getPrimaryKeyword, getAllKeywords, getAllKeywordsWithSizeCheck, isUnderspecifiedForExecution, applyRalplanGate, NON_LATIN_SCRIPT_PATTERN, parseExplicitWorkflowSlashInvocation, } from '../index.js';
 // Mock isTeamEnabled
 vi.mock('../../../features/auto-update.js', () => ({
     isTeamEnabled: vi.fn(() => true),
@@ -1692,6 +1692,158 @@ This article argues that fake popularity signals damage trust in open source.`;
             it('hasKeyword("오토파일럿") should be true', () => {
                 expect(hasKeyword('오토파일럿')).toBe(true);
             });
+        });
+    });
+    // -------------------------------------------------------------------------
+    // Intent-pattern guards (spec h) — file paths, code fences, and backticks
+    // must NOT trigger keyword detection
+    // -------------------------------------------------------------------------
+    describe('intent-pattern guards: file paths and code blocks (spec h)', () => {
+        it('file path /ralph-logs/foo.txt does NOT detect ralph', () => {
+            const result = detectKeywordsWithType('/ralph-logs/foo.txt');
+            expect(result.find((r) => r.type === 'ralph')).toBeUndefined();
+        });
+        it('path segment /path/to/ralph-config.json does NOT detect ralph', () => {
+            const result = detectKeywordsWithType('check /path/to/ralph-config.json for settings');
+            expect(result.find((r) => r.type === 'ralph')).toBeUndefined();
+        });
+        it('fenced code block containing /ralph does NOT detect ralph', () => {
+            const result = detectKeywordsWithType('```\n/ralph fix the bug\n```');
+            expect(result.find((r) => r.type === 'ralph')).toBeUndefined();
+        });
+        it('inline backtick `/ralph` does NOT detect ralph', () => {
+            const result = detectKeywordsWithType('use `/ralph` to start the loop');
+            expect(result.find((r) => r.type === 'ralph')).toBeUndefined();
+        });
+        it('inline backtick `/oh-my-claudecode:ralph` does NOT detect ralph', () => {
+            const result = detectKeywordsWithType('run `/oh-my-claudecode:ralph` if needed');
+            expect(result.find((r) => r.type === 'ralph')).toBeUndefined();
+        });
+        it('file path /autopilot-runs/log.txt does NOT detect autopilot', () => {
+            const result = detectKeywordsWithType('/autopilot-runs/log.txt');
+            expect(result.find((r) => r.type === 'autopilot')).toBeUndefined();
+        });
+        it('fenced code block containing /ultrawork does NOT detect ultrawork', () => {
+            const result = detectKeywordsWithType('```bash\n/ultrawork search codebase\n```');
+            expect(result.find((r) => r.type === 'ultrawork')).toBeUndefined();
+        });
+    });
+    // -------------------------------------------------------------------------
+    // Unified prefix detector (spec g) — /skill, /omc:skill, /oh-my-claudecode:skill
+    // all seed the same canonical state (T3 implementation required)
+    // -------------------------------------------------------------------------
+    describe('unified prefix detector: /omc: and /oh-my-claudecode: forms (spec g)', () => {
+        it('/omc:ralph fix auth detects ralph', () => {
+            const result = detectKeywordsWithType('/omc:ralph fix auth');
+            expect(result.find((r) => r.type === 'ralph')).toBeDefined();
+        });
+        it('/oh-my-claudecode:ralph fix auth detects ralph', () => {
+            const result = detectKeywordsWithType('/oh-my-claudecode:ralph fix auth');
+            expect(result.find((r) => r.type === 'ralph')).toBeDefined();
+        });
+        it('/omc:autopilot implement feature detects autopilot', () => {
+            const result = detectKeywordsWithType('/omc:autopilot implement feature');
+            expect(result.find((r) => r.type === 'autopilot')).toBeDefined();
+        });
+        it('/omc:ultrawork search codebase detects ultrawork', () => {
+            const result = detectKeywordsWithType('/omc:ultrawork search codebase');
+            expect(result.find((r) => r.type === 'ultrawork')).toBeDefined();
+        });
+        it('/ralph fix auth at message start detects ralph (explicit slash command)', () => {
+            const result = detectKeywordsWithType('/ralph fix auth');
+            expect(result.find((r) => r.type === 'ralph')).toBeDefined();
+        });
+        it('/autopilot at message start detects autopilot', () => {
+            const result = detectKeywordsWithType('/autopilot ship the new feature end to end');
+            expect(result.find((r) => r.type === 'autopilot')).toBeDefined();
+        });
+        it('/ultrawork at message start detects ultrawork', () => {
+            const result = detectKeywordsWithType('/ultrawork investigate this report');
+            expect(result.find((r) => r.type === 'ultrawork')).toBeDefined();
+        });
+        it('/deep-interview at message start detects deep-interview', () => {
+            const result = detectKeywordsWithType('/deep-interview about the architecture');
+            expect(result.find((r) => r.type === 'deep-interview')).toBeDefined();
+        });
+        it('/ralplan at message start detects ralplan', () => {
+            const result = detectKeywordsWithType('/ralplan issue #2622');
+            expect(result.find((r) => r.type === 'ralplan')).toBeDefined();
+        });
+        it('explicit slash detection does not duplicate the same keyword type', () => {
+            const result = detectKeywordsWithType('/ralph fix auth');
+            const ralphMatches = result.filter((r) => r.type === 'ralph');
+            expect(ralphMatches.length).toBe(1);
+        });
+    });
+    // -------------------------------------------------------------------------
+    // parseExplicitWorkflowSlashInvocation — unit tests (spec g)
+    // -------------------------------------------------------------------------
+    describe('parseExplicitWorkflowSlashInvocation — parser unit tests (spec g)', () => {
+        it('returns null for empty string', () => {
+            expect(parseExplicitWorkflowSlashInvocation('')).toBeNull();
+        });
+        it('returns null for non-slash prompt', () => {
+            expect(parseExplicitWorkflowSlashInvocation('ralph fix auth')).toBeNull();
+        });
+        it('parses bare /ralph with args', () => {
+            const result = parseExplicitWorkflowSlashInvocation('/ralph fix the auth flow');
+            expect(result).not.toBeNull();
+            expect(result.skill).toBe('ralph');
+            expect(result.args).toBe('fix the auth flow');
+        });
+        it('parses /omc:ralph and normalizes skill name', () => {
+            const result = parseExplicitWorkflowSlashInvocation('/omc:ralph debug this');
+            expect(result).not.toBeNull();
+            expect(result.skill).toBe('ralph');
+        });
+        it('parses /oh-my-claudecode:ralph and normalizes skill name', () => {
+            const result = parseExplicitWorkflowSlashInvocation('/oh-my-claudecode:ralph debug this');
+            expect(result).not.toBeNull();
+            expect(result.skill).toBe('ralph');
+        });
+        it('parses /autopilot with args', () => {
+            const result = parseExplicitWorkflowSlashInvocation('/autopilot ship the feature');
+            expect(result.skill).toBe('autopilot');
+            expect(result.args).toBe('ship the feature');
+        });
+        it('parses /deep-interview at message start', () => {
+            const result = parseExplicitWorkflowSlashInvocation('/deep-interview about system design');
+            expect(result.skill).toBe('deep-interview');
+        });
+        it('parses /self-improve at message start', () => {
+            const result = parseExplicitWorkflowSlashInvocation('/self-improve');
+            expect(result.skill).toBe('self-improve');
+            expect(result.args).toBe('');
+        });
+        it('returns null for /ralph-logs/foo.txt (path lookahead prevents match)', () => {
+            expect(parseExplicitWorkflowSlashInvocation('/ralph-logs/foo.txt')).toBeNull();
+        });
+        it('returns null for /ralph inside fenced code block', () => {
+            expect(parseExplicitWorkflowSlashInvocation('```\n/ralph fix this\n```')).toBeNull();
+        });
+        it('returns null for /ralph inside inline backtick', () => {
+            expect(parseExplicitWorkflowSlashInvocation('use `/ralph` to start')).toBeNull();
+        });
+        it('is case-insensitive: /RALPH is detected', () => {
+            const result = parseExplicitWorkflowSlashInvocation('/RALPH fix auth');
+            expect(result.skill).toBe('ralph');
+        });
+        it('leading whitespace before / is allowed', () => {
+            const result = parseExplicitWorkflowSlashInvocation('  /ralph fix auth');
+            expect(result.skill).toBe('ralph');
+        });
+        it('/ralph with no args returns empty args string', () => {
+            const result = parseExplicitWorkflowSlashInvocation('/ralph');
+            expect(result.skill).toBe('ralph');
+            expect(result.args).toBe('');
+        });
+        it('all three prefix forms produce the same skill name for autopilot', () => {
+            const bare = parseExplicitWorkflowSlashInvocation('/autopilot go');
+            const omc = parseExplicitWorkflowSlashInvocation('/omc:autopilot go');
+            const full = parseExplicitWorkflowSlashInvocation('/oh-my-claudecode:autopilot go');
+            expect(bare.skill).toBe('autopilot');
+            expect(omc.skill).toBe('autopilot');
+            expect(full.skill).toBe('autopilot');
         });
     });
 });
