@@ -24,6 +24,11 @@ vi.mock('../tmux-utils.js', () => ({
   resolveLaunchPolicy: vi.fn(),
   buildTmuxSessionName: vi.fn(() => 'test-session'),
   buildTmuxShellCommand: vi.fn((cmd: string, args: string[]) => `${cmd} ${args.join(' ')}`),
+  buildTmuxShellCommandWithEnv: vi.fn((cmd: string, args: string[], envVars: Record<string, string>) => {
+    const envPart = Object.entries(envVars).map(([k, v]) => `${k}=${v}`).join(' ');
+    return envPart ? `${envPart} ${cmd} ${args.join(' ')}` : `${cmd} ${args.join(' ')}`;
+  }),
+  isNativeWindowsShell: vi.fn(() => false),
   wrapWithLoginShell: vi.fn((cmd: string) => cmd),
   quoteShellArg: vi.fn((s: string) => s),
   isClaudeAvailable: vi.fn(() => true),
@@ -34,6 +39,8 @@ import { runClaude, launchCommand, extractNotifyFlag, extractOpenClawFlag, extra
 import {
   resolveLaunchPolicy,
   buildTmuxShellCommand,
+  buildTmuxShellCommandWithEnv,
+  isNativeWindowsShell,
   wrapWithLoginShell,
   tmuxExec,
 } from '../tmux-utils.js';
@@ -1178,6 +1185,7 @@ describe('runClaude outside-tmux — env forwarding', () => {
 
   it('injects CLAUDE_CONFIG_DIR export into the tmux shell command', () => {
     process.env.CLAUDE_CONFIG_DIR = '/custom/config';
+    vi.mocked(isNativeWindowsShell).mockReturnValue(false);
 
     runClaude('/tmp', [], 'sid');
 
@@ -1188,6 +1196,7 @@ describe('runClaude outside-tmux — env forwarding', () => {
 
   it('places env exports before the sleep/claude command', () => {
     process.env.CLAUDE_CONFIG_DIR = '/custom/config';
+    vi.mocked(isNativeWindowsShell).mockReturnValue(false);
 
     runClaude('/tmp', [], 'sid');
 
@@ -1207,10 +1216,33 @@ describe('runClaude outside-tmux — env forwarding', () => {
     delete process.env.OMC_SLACK;
     delete process.env.OMC_WEBHOOK;
     delete process.env.OMC_PLUGIN_ROOT;
+    vi.mocked(isNativeWindowsShell).mockReturnValue(false);
 
     runClaude('/tmp', [], 'sid');
 
     const cmdString = vi.mocked(wrapWithLoginShell).mock.calls[0][0];
     expect(cmdString).not.toContain('export ');
+  });
+
+  it('passes a cmd-friendly raw command string into login-shell wrapping on native Windows', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    process.env.CLAUDE_CONFIG_DIR = 'C:\\Users\\bellman\\config dir';
+    vi.mocked(isNativeWindowsShell).mockReturnValue(true);
+
+    runClaude('/tmp', ['--print-system-prompt', 'hello world'], 'sid');
+
+    expect(vi.mocked(buildTmuxShellCommandWithEnv)).toHaveBeenCalledWith(
+      'claude',
+      ['--print-system-prompt', 'hello world'],
+      { CLAUDE_CONFIG_DIR: 'C:\\Users\\bellman\\config dir' },
+    );
+    const rawCommand = vi.mocked(wrapWithLoginShell).mock.calls[0][0];
+    expect(rawCommand).toContain('CLAUDE_CONFIG_DIR=C:\\Users\\bellman\\config dir');
+    expect(rawCommand).toContain('claude --print-system-prompt hello world');
+    expect(rawCommand).not.toContain('sleep 0.3');
+    expect(rawCommand).not.toContain('tcflush');
+
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
   });
 });

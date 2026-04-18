@@ -4,9 +4,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseSandboxContract } from '../../autoresearch/contracts.js';
-const { tmuxAvailableMock, buildTmuxShellCommandMock, wrapWithLoginShellMock, quoteShellArgMock } = vi.hoisted(() => ({
+const { tmuxAvailableMock, buildTmuxShellCommandMock, buildTmuxShellCommandWithEnvMock, wrapWithLoginShellMock, quoteShellArgMock } = vi.hoisted(() => ({
     tmuxAvailableMock: vi.fn(),
     buildTmuxShellCommandMock: vi.fn((cmd, args) => `${cmd} ${args.join(' ')}`),
+    buildTmuxShellCommandWithEnvMock: vi.fn((cmd, args, envVars) => {
+        const envPart = Object.entries(envVars).map(([k, v]) => `${k}=${v}`).join(' ');
+        return envPart ? `${envPart} ${cmd} ${args.join(' ')}` : `${cmd} ${args.join(' ')}`;
+    }),
     wrapWithLoginShellMock: vi.fn((cmd) => `wrapped:${cmd}`),
     quoteShellArgMock: vi.fn((value) => `'${value}'`),
 }));
@@ -21,6 +25,7 @@ const tmuxExecMock = vi.hoisted(() => vi.fn());
 vi.mock('../tmux-utils.js', () => ({
     isTmuxAvailable: tmuxAvailableMock,
     buildTmuxShellCommand: buildTmuxShellCommandMock,
+    buildTmuxShellCommandWithEnv: buildTmuxShellCommandWithEnvMock,
     wrapWithLoginShell: wrapWithLoginShellMock,
     quoteShellArg: quoteShellArgMock,
     tmuxExec: tmuxExecMock,
@@ -346,6 +351,7 @@ describe('spawnAutoresearchSetupTmux', () => {
         tmuxExecMock.mockReset();
         tmuxAvailableMock.mockReset();
         buildTmuxShellCommandMock.mockClear();
+        buildTmuxShellCommandWithEnvMock.mockClear();
         wrapWithLoginShellMock.mockClear();
         logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
         dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(1234567890);
@@ -366,7 +372,7 @@ describe('spawnAutoresearchSetupTmux', () => {
                         'new-session', '-d', '-P', '-F', '#{pane_id}', '-s', 'omc-autoresearch-setup-kf12oi', '-c', repo,
                     ]);
                     expect(typeof args[9]).toBe('string');
-                    expect(String(args[9])).toContain('wrapped:env');
+                    expect(String(args[9])).toContain('wrapped:CODEX_HOME=');
                     expect(String(args[9])).toContain(`CODEX_HOME=${repo}/.omx/tmp/omc-autoresearch-setup-kf12oi/codex-home`);
                     expect(String(args[9])).toContain('claude');
                     expect(String(args[9])).toContain('--dangerously-skip-permissions');
@@ -383,8 +389,8 @@ describe('spawnAutoresearchSetupTmux', () => {
                 throw new Error(`unexpected tmuxExec call: ${String(args)}`);
             });
             spawnAutoresearchSetupTmux(repo);
-            expect(buildTmuxShellCommandMock).toHaveBeenCalledWith('env', [`CODEX_HOME=${repo}/.omx/tmp/omc-autoresearch-setup-kf12oi/codex-home`, 'claude', '--dangerously-skip-permissions']);
-            expect(wrapWithLoginShellMock).toHaveBeenCalledWith(`env CODEX_HOME=${repo}/.omx/tmp/omc-autoresearch-setup-kf12oi/codex-home claude --dangerously-skip-permissions`);
+            expect(buildTmuxShellCommandWithEnvMock).toHaveBeenCalledWith('claude', ['--dangerously-skip-permissions'], { CODEX_HOME: `${repo}/.omx/tmp/omc-autoresearch-setup-kf12oi/codex-home` });
+            expect(wrapWithLoginShellMock).toHaveBeenCalledWith(`CODEX_HOME=${repo}/.omx/tmp/omc-autoresearch-setup-kf12oi/codex-home claude --dangerously-skip-permissions`);
             expect(buildAutoresearchSetupSlashCommand()).toBe('/deep-interview --autoresearch');
             expect(tmuxExecMock).toHaveBeenCalledWith(['send-keys', '-t', '%42', '-l', buildAutoresearchSetupSlashCommand()], expect.objectContaining({ stripTmux: true }));
             expect(logSpy).toHaveBeenCalledWith('\nAutoresearch setup launched in background Claude session.');
@@ -392,6 +398,28 @@ describe('spawnAutoresearchSetupTmux', () => {
             expect(hasSessionCalls).toBe(1);
         }
         finally {
+            await rm(repo, { recursive: true, force: true });
+        }
+    });
+    it('builds native Windows-friendly setup commands without env-prefix argv hacks', async () => {
+        tmuxAvailableMock.mockReturnValue(true);
+        const repo = await initRepo();
+        const originalPlatform = process.platform;
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        try {
+            tmuxExecMock.mockImplementation((args) => {
+                if (args[0] === 'new-session')
+                    return '%42\n';
+                if (args[0] === 'has-session' || args[0] === 'send-keys')
+                    return '';
+                throw new Error(`unexpected tmuxExec call: ${String(args)}`);
+            });
+            spawnAutoresearchSetupTmux(repo);
+            expect(buildTmuxShellCommandWithEnvMock).toHaveBeenCalledWith('claude', ['--dangerously-skip-permissions'], { CODEX_HOME: `${repo}/.omx/tmp/omc-autoresearch-setup-kf12oi/codex-home` });
+            expect(wrapWithLoginShellMock).toHaveBeenCalledWith(`CODEX_HOME=${repo}/.omx/tmp/omc-autoresearch-setup-kf12oi/codex-home claude --dangerously-skip-permissions`);
+        }
+        finally {
+            Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
             await rm(repo, { recursive: true, force: true });
         }
     });

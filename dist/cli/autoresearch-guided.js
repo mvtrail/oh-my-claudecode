@@ -8,7 +8,7 @@ import { parseSandboxContract, slugifyMissionName } from '../autoresearch/contra
 import { AUTORESEARCH_SETUP_CONFIDENCE_THRESHOLD, } from '../autoresearch/setup-contract.js';
 import { buildMissionContent, buildSandboxContent, isLaunchReadyEvaluatorCommand, writeAutoresearchDeepInterviewArtifacts, } from './autoresearch-intake.js';
 import { runAutoresearchSetupSession, } from './autoresearch-setup-session.js';
-import { buildTmuxShellCommand, isTmuxAvailable, quoteShellArg, tmuxExec, wrapWithLoginShell } from './tmux-utils.js';
+import { buildTmuxShellCommand, buildTmuxShellCommandWithEnv, isTmuxAvailable, quoteShellArg, tmuxExec, wrapWithLoginShell } from './tmux-utils.js';
 const CLAUDE_BYPASS_FLAG = '--dangerously-skip-permissions';
 const AUTORESEARCH_SETUP_SLASH_COMMAND = '/deep-interview --autoresearch';
 function createQuestionIO() {
@@ -222,14 +222,6 @@ function resolveMissionRepoRoot(missionDir) {
         stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
 }
-// Strip TMUX from the environment so tmux commands always target the default
-// server. Without this, autoresearch launched from inside a nested tmux session
-// (e.g. wtx/Worktrunk worktrees) silently creates sessions on the nested
-// server, making them unreachable from the outer session.
-function tmuxEnv() {
-    const { TMUX: _, ...env } = process.env;
-    return env;
-}
 function assertTmuxSessionAvailable(sessionName) {
     try {
         tmuxExec(['has-session', '-t', sessionName], { stripTmux: true, stdio: 'ignore' });
@@ -302,7 +294,7 @@ export function spawnAutoresearchSetupTmux(repoRoot) {
     }
     const sessionName = `omc-autoresearch-setup-${Date.now().toString(36)}`;
     const codexHome = prepareAutoresearchSetupCodexHome(repoRoot, sessionName);
-    const claudeCommand = buildTmuxShellCommand('env', [`CODEX_HOME=${codexHome}`, 'claude', CLAUDE_BYPASS_FLAG]);
+    const claudeCommand = buildTmuxShellCommandWithEnv('claude', [CLAUDE_BYPASS_FLAG], { CODEX_HOME: codexHome });
     const wrappedClaudeCommand = wrapWithLoginShell(claudeCommand);
     const paneId = tmuxExec(['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', sessionName, '-c', repoRoot, wrappedClaudeCommand], { stripTmux: true }).trim();
     assertTmuxSessionAvailable(sessionName);

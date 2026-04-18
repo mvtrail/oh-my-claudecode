@@ -9,7 +9,7 @@ import { basename, join } from 'path';
 import { resolvePluginDirArg } from '../lib/plugin-dir.js';
 import { stripRetiredTeamMcpServers } from '../installer/mcp-registry.js';
 import { getClaudeConfigDir } from '../utils/config-dir.js';
-import { resolveLaunchPolicy, buildTmuxSessionName, buildTmuxShellCommand, wrapWithLoginShell, isClaudeAvailable, quoteShellArg, tmuxExec, } from './tmux-utils.js';
+import { resolveLaunchPolicy, buildTmuxSessionName, buildTmuxShellCommand, buildTmuxShellCommandWithEnv, isNativeWindowsShell, wrapWithLoginShell, isClaudeAvailable, quoteShellArg, tmuxExec, } from './tmux-utils.js';
 import { OMC_PLUGIN_ROOT_ENV } from '../lib/env-vars.js';
 import { OMC_CONFIG_FILE_REL } from '../lib/paths.js';
 // Flag mapping
@@ -414,15 +414,25 @@ export function buildEnvExportPrefix(vars) {
  * Creates tmux session with Claude
  */
 function runClaudeOutsideTmux(cwd, args, _sessionId) {
-    const rawClaudeCmd = buildTmuxShellCommand('claude', args);
-    const envPrefix = buildEnvExportPrefix(TMUX_ENV_FORWARD);
+    const forwardedEnv = Object.fromEntries(TMUX_ENV_FORWARD
+        .map((name) => [name, process.env[name]])
+        .filter(([, value]) => value !== undefined));
+    const rawClaudeCmd = isNativeWindowsShell()
+        ? buildTmuxShellCommandWithEnv('claude', args, forwardedEnv)
+        : buildTmuxShellCommand('claude', args);
+    const envPrefix = !isNativeWindowsShell() && Object.keys(forwardedEnv).length > 0
+        ? buildEnvExportPrefix(TMUX_ENV_FORWARD)
+        : '';
     // Drain any pending terminal Device Attributes (DA1) response from stdin.
     // When tmux attach-session sends a DA1 query, the terminal replies with
     // \e[?6c which lands in the pty buffer before Claude reads input.
     // A short sleep lets the response arrive, then tcflush discards it.
     // Wrap in login shell so .bashrc/.zshrc are sourced (PATH, nvm, etc.)
     // Env exports are injected after RC sourcing so they override stale tmux server env.
-    const claudeCmd = wrapWithLoginShell(`${envPrefix}sleep 0.3; perl -e 'use POSIX;tcflush(0,TCIFLUSH)' 2>/dev/null; ${rawClaudeCmd}`);
+    const preflight = process.platform === 'win32'
+        ? envPrefix
+        : `${envPrefix}sleep 0.3; perl -e 'use POSIX;tcflush(0,TCIFLUSH)' 2>/dev/null; `;
+    const claudeCmd = wrapWithLoginShell(`${preflight}${rawClaudeCmd}`);
     const sessionName = buildTmuxSessionName(cwd);
     try {
         tmuxExec(['new-session', '-d', '-s', sessionName, '-c', cwd, claudeCmd], { stripTmux: true, stdio: 'inherit' });

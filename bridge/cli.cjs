@@ -8377,6 +8377,7 @@ function normalizeRegistryEntry(value) {
   const raw = value;
   const command = typeof raw.command === "string" && raw.command.trim().length > 0 ? raw.command.trim() : void 0;
   const url = typeof raw.url === "string" && raw.url.trim().length > 0 ? raw.url.trim() : void 0;
+  const type = typeof raw.type === "string" && raw.type.trim().length > 0 ? raw.type.trim() : void 0;
   if (!command && !url) {
     return null;
   }
@@ -8389,6 +8390,7 @@ function normalizeRegistryEntry(value) {
     ...args.length > 0 ? { args } : {},
     ...env2 && Object.keys(env2).length > 0 ? { env: env2 } : {},
     ...url ? { url } : {},
+    ...type ? { type } : {},
     ...effectiveTimeout ? { timeout: effectiveTimeout } : {}
   };
 }
@@ -8581,6 +8583,9 @@ function renderCodexServerBlock(name, entry) {
   if (entry.url) {
     lines.push(`url = ${renderTomlString(entry.url)}`);
   }
+  if (entry.type) {
+    lines.push(`type = ${renderTomlString(entry.type)}`);
+  }
   if (entry.env && Object.keys(entry.env).length > 0) {
     lines.push(`env = ${renderTomlEnvTable(entry.env)}`);
   }
@@ -8661,6 +8666,9 @@ function parseCodexMcpRegistryEntries(content) {
     } else if (key === "url") {
       const parsed = parseTomlQuotedString(value);
       if (parsed) currentEntry.url = parsed;
+    } else if (key === "type") {
+      const parsed = parseTomlQuotedString(value);
+      if (parsed) currentEntry.type = parsed;
     } else if (key === "env") {
       const parsed = parseTomlEnvTable(value);
       if (parsed) currentEntry.env = parsed;
@@ -9364,6 +9372,137 @@ function getInstalledOmcPluginRoots() {
   }
   return Array.from(pluginRoots);
 }
+function countPluginSyncPayloadEntries(root2) {
+  let score = 0;
+  for (const entry of PLUGIN_SYNC_PAYLOAD) {
+    if ((0, import_fs36.existsSync)((0, import_path48.join)(root2, entry))) {
+      score += 1;
+    }
+  }
+  return score;
+}
+function getKnownMarketplaceInstallRoots() {
+  const knownMarketplacesPath = (0, import_path48.join)(CLAUDE_CONFIG_DIR, "plugins", "known_marketplaces.json");
+  if (!(0, import_fs36.existsSync)(knownMarketplacesPath)) {
+    return [];
+  }
+  try {
+    const raw = JSON.parse((0, import_fs36.readFileSync)(knownMarketplacesPath, "utf-8"));
+    const roots = /* @__PURE__ */ new Set();
+    for (const [marketplaceId, entry] of Object.entries(raw)) {
+      const isOmcMarketplace = marketplaceId.toLowerCase().includes("omc") || marketplaceId.toLowerCase().includes("oh-my-claudecode");
+      if (!isOmcMarketplace) {
+        continue;
+      }
+      if (typeof entry?.installLocation === "string" && entry.installLocation.trim().length > 0) {
+        roots.add(entry.installLocation.trim());
+      }
+      if (typeof entry?.source?.path === "string" && entry.source.path.trim().length > 0) {
+        roots.add(entry.source.path.trim());
+      }
+    }
+    return Array.from(roots);
+  } catch {
+    return [];
+  }
+}
+function getGlobalInstalledPackageRoot() {
+  try {
+    const npmRoot = String((0, import_child_process13.execSync)("npm root -g", {
+      encoding: "utf-8",
+      stdio: "pipe",
+      timeout: 1e4,
+      ...process.platform === "win32" ? { windowsHide: true } : {}
+    }) ?? "").trim();
+    if (!npmRoot) {
+      return null;
+    }
+    const globalPackageRoot = (0, import_path48.join)(npmRoot, "oh-my-claude-sisyphus");
+    return (0, import_fs36.existsSync)(globalPackageRoot) ? globalPackageRoot : null;
+  } catch {
+    return null;
+  }
+}
+function isCacheInstalledPluginRoot(root2) {
+  const normalizedRoot = normalizePath2(root2);
+  const cacheBase = normalizePath2((0, import_path48.join)(CLAUDE_CONFIG_DIR, "plugins", "cache"));
+  return normalizedRoot === cacheBase || normalizedRoot.startsWith(`${cacheBase}/`);
+}
+function resolveBestPluginSyncSource(targetRoots) {
+  const excludedRoots = new Set(targetRoots.map(normalizePath2));
+  const seen = /* @__PURE__ */ new Set();
+  const globalPackageRoot = getGlobalInstalledPackageRoot();
+  const candidates = [
+    ...getKnownMarketplaceInstallRoots(),
+    ...globalPackageRoot ? [globalPackageRoot] : [],
+    getRuntimePackageRoot()
+  ];
+  let bestRoot = null;
+  let bestScore = -1;
+  let bestOrder = Number.POSITIVE_INFINITY;
+  for (const [order, candidate] of candidates.entries()) {
+    const normalizedCandidate = normalizePath2(candidate);
+    if (seen.has(normalizedCandidate) || excludedRoots.has(normalizedCandidate) || !(0, import_fs36.existsSync)(candidate)) {
+      continue;
+    }
+    seen.add(normalizedCandidate);
+    const score = countPluginSyncPayloadEntries(candidate);
+    if (score === 0) {
+      continue;
+    }
+    if (score > bestScore || score === bestScore && order < bestOrder) {
+      bestRoot = candidate;
+      bestScore = score;
+      bestOrder = order;
+    }
+  }
+  return bestRoot;
+}
+function copyPluginSyncPayload(sourceRoot, targetRoots) {
+  if (targetRoots.length === 0) {
+    return { synced: false, errors: [] };
+  }
+  let synced = false;
+  const errors = [];
+  for (const targetRoot of targetRoots) {
+    let copiedToTarget = false;
+    for (const entry of PLUGIN_SYNC_PAYLOAD) {
+      const sourcePath = (0, import_path48.join)(sourceRoot, entry);
+      if (!(0, import_fs36.existsSync)(sourcePath)) {
+        continue;
+      }
+      try {
+        (0, import_fs36.cpSync)(sourcePath, (0, import_path48.join)(targetRoot, entry), {
+          recursive: true,
+          force: true
+        });
+        copiedToTarget = true;
+      } catch (error2) {
+        const message = error2 instanceof Error ? error2.message : String(error2);
+        errors.push(`Failed to sync ${entry} to ${targetRoot}: ${message}`);
+      }
+    }
+    synced = synced || copiedToTarget;
+  }
+  return { synced, errors };
+}
+function syncInstalledPluginPayload() {
+  const targetRoots = getInstalledOmcPluginRoots().filter((root2) => (0, import_fs36.existsSync)(root2) && isCacheInstalledPluginRoot(root2));
+  if (targetRoots.length === 0) {
+    return { synced: false, errors: [], sourceRoot: null, targetRoots: [] };
+  }
+  const sourceRoot = resolveBestPluginSyncSource(targetRoots);
+  if (!sourceRoot) {
+    return {
+      synced: false,
+      errors: ["Unable to find a complete OMC package source to repair installed plugin roots"],
+      sourceRoot: null,
+      targetRoots
+    };
+  }
+  const result = copyPluginSyncPayload(sourceRoot, targetRoots);
+  return { ...result, sourceRoot, targetRoots };
+}
 function hasPluginProvidedAgentFiles() {
   return getInstalledOmcPluginRoots().some(
     (pluginRoot) => directoryHasMarkdownFiles((0, import_path48.join)(pluginRoot, "agents"))
@@ -9667,6 +9806,17 @@ function install(options = {}) {
   log3(`Platform: ${process.platform} (Node.js hooks)`);
   const runningAsPlugin = isRunningAsPlugin();
   const projectScoped = isProjectScopedPlugin();
+  const pluginPayloadSync = syncInstalledPluginPayload();
+  if (pluginPayloadSync.errors.length > 0) {
+    for (const error2 of pluginPayloadSync.errors) {
+      log3(`Plugin cache sync warning: ${error2}`);
+    }
+  }
+  if (pluginPayloadSync.synced) {
+    const targetSummary = pluginPayloadSync.targetRoots.length > 0 ? pluginPayloadSync.targetRoots.join(", ") : "installed plugin roots";
+    const sourceSummary = pluginPayloadSync.sourceRoot ?? "unknown source";
+    log3(`Repaired installed OMC plugin payload from ${sourceSummary} -> ${targetSummary}`);
+  }
   const pluginProvidesAgentFiles = hasPluginProvidedAgentFiles();
   const pluginProvidesSkillFiles = hasPluginProvidedSkillFiles();
   const pluginProvidesHookFiles = hasPluginProvidedHookFiles();
@@ -9951,7 +10101,7 @@ function getInstallInfo() {
     return null;
   }
 }
-var import_fs36, import_path48, import_url9, import_os11, import_child_process13, CLAUDE_CONFIG_DIR, AGENTS_DIR, COMMANDS_DIR, SKILLS_DIR, HOOKS_DIR, HUD_DIR, SETTINGS_FILE, VERSION_FILE, OMC_MANAGED_SKILL_MARKER, CORE_COMMANDS, VERSION, OMC_VERSION_MARKER_PATTERN, CC_NATIVE_COMMANDS, SKININTHEGAMEBROS_ONLY_SKILLS, OMC_HOOK_FILENAMES, STANDALONE_HOOK_TEMPLATE_FILES;
+var import_fs36, import_path48, import_url9, import_os11, import_child_process13, CLAUDE_CONFIG_DIR, AGENTS_DIR, COMMANDS_DIR, SKILLS_DIR, HOOKS_DIR, HUD_DIR, SETTINGS_FILE, VERSION_FILE, OMC_MANAGED_SKILL_MARKER, CORE_COMMANDS, VERSION, OMC_VERSION_MARKER_PATTERN, CC_NATIVE_COMMANDS, SKININTHEGAMEBROS_ONLY_SKILLS, OMC_HOOK_FILENAMES, STANDALONE_HOOK_TEMPLATE_FILES, PLUGIN_SYNC_PAYLOAD;
 var init_installer = __esm({
   "src/installer/index.ts"() {
     "use strict";
@@ -10017,6 +10167,21 @@ var init_installer = __esm({
       "post-tool-use-failure.mjs",
       "persistent-mode.mjs",
       "code-simplifier.mjs"
+    ];
+    PLUGIN_SYNC_PAYLOAD = [
+      "dist",
+      "bridge",
+      "hooks",
+      "scripts",
+      "skills",
+      "agents",
+      "templates",
+      "docs",
+      ".claude-plugin",
+      ".mcp.json",
+      "README.md",
+      "LICENSE",
+      "package.json"
     ];
   }
 });
@@ -10128,40 +10293,8 @@ function syncMarketplaceClone(verbose = false) {
   }
   return { ok: true, message: "Marketplace clone updated" };
 }
-function copyPluginSyncPayload(sourceRoot, targetRoots) {
-  if (targetRoots.length === 0) {
-    return { synced: false, errors: [] };
-  }
-  let synced = false;
-  const errors = [];
-  for (const targetRoot of targetRoots) {
-    let copiedToTarget = false;
-    for (const entry of PLUGIN_SYNC_PAYLOAD) {
-      const sourcePath = (0, import_path49.join)(sourceRoot, entry);
-      if (!(0, import_fs37.existsSync)(sourcePath)) {
-        continue;
-      }
-      try {
-        (0, import_fs37.cpSync)(sourcePath, (0, import_path49.join)(targetRoot, entry), {
-          recursive: true,
-          force: true
-        });
-        copiedToTarget = true;
-      } catch (error2) {
-        const message = error2 instanceof Error ? error2.message : String(error2);
-        errors.push(`Failed to sync ${entry} to ${targetRoot}: ${message}`);
-      }
-    }
-    synced = synced || copiedToTarget;
-  }
-  return { synced, errors };
-}
 function syncActivePluginCache() {
-  const activeRoots = getInstalledOmcPluginRoots().filter((root2) => (0, import_fs37.existsSync)(root2));
-  if (activeRoots.length === 0) {
-    return { synced: false, errors: [] };
-  }
-  const result = copyPluginSyncPayload(getRuntimePackageRoot(), activeRoots);
+  const result = syncInstalledPluginPayload();
   if (result.synced) {
     console.log("[omc update] Synced plugin cache");
   }
@@ -10763,7 +10896,7 @@ function initSilentAutoUpdate(config2 = {}) {
   silentAutoUpdate(config2).catch(() => {
   });
 }
-var import_fs37, import_path49, import_child_process14, REPO_OWNER, REPO_NAME, GITHUB_API_URL, GITHUB_RAW_URL, PLUGIN_SYNC_PAYLOAD, CLAUDE_CONFIG_DIR2, VERSION_FILE2, CONFIG_FILE, SILENT_UPDATE_STATE_FILE;
+var import_fs37, import_path49, import_child_process14, REPO_OWNER, REPO_NAME, GITHUB_API_URL, GITHUB_RAW_URL, CLAUDE_CONFIG_DIR2, VERSION_FILE2, CONFIG_FILE, SILENT_UPDATE_STATE_FILE;
 var init_auto_update = __esm({
   "src/features/auto-update.ts"() {
     "use strict";
@@ -10779,21 +10912,6 @@ var init_auto_update = __esm({
     REPO_NAME = "oh-my-claudecode";
     GITHUB_API_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}`;
     GITHUB_RAW_URL = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}`;
-    PLUGIN_SYNC_PAYLOAD = [
-      "dist",
-      "bridge",
-      "hooks",
-      "scripts",
-      "skills",
-      "agents",
-      "templates",
-      "docs",
-      ".claude-plugin",
-      ".mcp.json",
-      "README.md",
-      "LICENSE",
-      "package.json"
-    ];
     CLAUDE_CONFIG_DIR2 = getClaudeConfigDir();
     VERSION_FILE2 = (0, import_path49.join)(CLAUDE_CONFIG_DIR2, ".omc-version.json");
     CONFIG_FILE = (0, import_path49.join)(CLAUDE_CONFIG_DIR2, OMC_CONFIG_FILE_REL);
@@ -21951,10 +22069,19 @@ function tmuxEnv() {
 function resolveEnv(opts) {
   return opts?.stripTmux ? tmuxEnv() : process.env;
 }
+function isUnixLikeOnWindows() {
+  return process.platform === "win32" && !!(process.env.MSYSTEM || process.env.MINGW_PREFIX);
+}
+function isNativeWindowsShell() {
+  return process.platform === "win32" && !isUnixLikeOnWindows();
+}
 function quoteForCmd(arg) {
   if (arg.length === 0) return '""';
   if (!/[\s"%^&|<>()]/.test(arg)) return arg;
   return `"${arg.replace(/(["%])/g, "$1$1")}"`;
+}
+function escapeForCmdSet(value) {
+  return value.replace(/"/g, '""');
 }
 function resolveTmuxInvocation(args) {
   const resolvedBinary = resolveTmuxBinaryPath();
@@ -22092,9 +22219,30 @@ function sanitizeTmuxToken(value) {
   return cleaned || "unknown";
 }
 function buildTmuxShellCommand(command, args) {
+  if (isNativeWindowsShell()) {
+    return [command, ...args].map(quoteForCmd).join(" ");
+  }
   return [quoteShellArg2(command), ...args.map(quoteShellArg2)].join(" ");
 }
+function buildTmuxShellCommandWithEnv(command, args, envVars) {
+  const envEntries = Object.entries(envVars);
+  if (envEntries.length === 0) {
+    return buildTmuxShellCommand(command, args);
+  }
+  if (isNativeWindowsShell()) {
+    const envPrefix = envEntries.map(([key, value]) => `set "${key}=${escapeForCmdSet(value)}"`).join(" && ");
+    return `${envPrefix} && ${buildTmuxShellCommand(command, args)}`;
+  }
+  return buildTmuxShellCommand(
+    "env",
+    [...envEntries.map(([key, value]) => `${key}=${value}`), command, ...args]
+  );
+}
 function wrapWithLoginShell(command) {
+  if (isNativeWindowsShell()) {
+    const comspec = process.env.COMSPEC || "cmd.exe";
+    return `${quoteForCmd(comspec)} /d /s /c ${quoteForCmd(command)}`;
+  }
   const shell = process.env.SHELL || "/bin/bash";
   const shellName = (0, import_path69.basename)(shell).replace(/\.(exe|cmd|bat)$/i, "");
   const rcFile = process.env.HOME ? `${process.env.HOME}/.${shellName}rc` : "";
@@ -27400,7 +27548,7 @@ __export(tmux_session_exports, {
   getDefaultShell: () => getDefaultShell,
   injectToLeaderPane: () => injectToLeaderPane,
   isSessionAlive: () => isSessionAlive,
-  isUnixLikeOnWindows: () => isUnixLikeOnWindows,
+  isUnixLikeOnWindows: () => isUnixLikeOnWindows2,
   isWorkerAlive: () => isWorkerAlive,
   killSession: () => killSession,
   killTeamSession: () => killTeamSession,
@@ -27425,7 +27573,7 @@ function detectTeamMultiplexerContext(env2 = process.env) {
   if (env2.CMUX_SURFACE_ID) return "cmux";
   return "none";
 }
-function isUnixLikeOnWindows() {
+function isUnixLikeOnWindows2() {
   return process.platform === "win32" && !!(process.env.MSYSTEM || process.env.MINGW_PREFIX);
 }
 async function applyMainVerticalLayout(teamTarget) {
@@ -27451,7 +27599,7 @@ async function applyMainVerticalLayout(teamTarget) {
   }
 }
 function getDefaultShell() {
-  if (process.platform === "win32" && !isUnixLikeOnWindows()) {
+  if (process.platform === "win32" && !isUnixLikeOnWindows2()) {
     return process.env.COMSPEC || "cmd.exe";
   }
   const shell = process.env.SHELL || "/bin/bash";
@@ -27499,7 +27647,7 @@ function resolveSupportedShellAffinity(shellPath) {
   return { shell: shellPath, rcFile };
 }
 function buildWorkerLaunchSpec(shellPath) {
-  if (isUnixLikeOnWindows()) {
+  if (isUnixLikeOnWindows2()) {
     return { shell: "/bin/sh", rcFile: null };
   }
   const preferred = resolveSupportedShellAffinity(shellPath);
@@ -27513,7 +27661,7 @@ function buildWorkerLaunchSpec(shellPath) {
   if (bash) return { shell: bash.shell, rcFile: bashRc };
   return { shell: "/bin/sh", rcFile: null };
 }
-function escapeForCmdSet(value) {
+function escapeForCmdSet2(value) {
   return value.replace(/"/g, '""');
 }
 function shellNameFromPath(shellPath) {
@@ -27562,12 +27710,12 @@ function buildWorkerStartCommand(config2) {
   const launchSpec = buildWorkerLaunchSpec(process.env.SHELL);
   const launchWords = getLaunchWords(config2);
   const shouldSourceRc = process.env.OMC_TEAM_NO_RC !== "1";
-  if (process.platform === "win32" && !isUnixLikeOnWindows()) {
+  if (process.platform === "win32" && !isUnixLikeOnWindows2()) {
     const envPrefix = Object.entries(config2.envVars).map(([k, v]) => {
       assertSafeEnvKey(k);
-      return `set "${k}=${escapeForCmdSet(v)}"`;
+      return `set "${k}=${escapeForCmdSet2(v)}"`;
     }).join(" && ");
-    const launch = config2.launchBinary ? launchWords.map((part) => `"${escapeForCmdSet(part)}"`).join(" ") : launchWords[0];
+    const launch = config2.launchBinary ? launchWords.map((part) => `"${escapeForCmdSet2(part)}"`).join(" ") : launchWords[0];
     const cmdBody = envPrefix ? `${envPrefix} && ${launch}` : launch;
     return `${shell} /d /s /c "${cmdBody}"`;
   }
@@ -29432,6 +29580,20 @@ function sanitizeTeamName(name) {
   if (!sanitized) throw new Error(`Invalid team name: "${name}" produces empty slug after sanitization`);
   return sanitized;
 }
+function shouldUseLaunchTimeCliResolution(reason) {
+  return /untrusted location|relative path/i.test(reason);
+}
+function resolvePreflightBinaryPath(agentType) {
+  try {
+    return { path: resolveValidatedBinaryPath(agentType), degraded: false };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    if (shouldUseLaunchTimeCliResolution(reason)) {
+      return { path: getContract(agentType).binary, degraded: true, reason };
+    }
+    throw err;
+  }
+}
 async function isWorkerPaneAlive(paneId) {
   if (!paneId) return false;
   try {
@@ -29730,7 +29892,7 @@ async function startTeamV2(config2) {
   const missingBinaryReasons = [];
   for (const agentType of [...new Set(agentTypes)]) {
     try {
-      resolvedBinaryPaths[agentType] = resolveValidatedBinaryPath(agentType);
+      resolvedBinaryPaths[agentType] = resolvePreflightBinaryPath(agentType).path;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       missingBinaryReasons.push({ agentType, reason });
@@ -29741,7 +29903,7 @@ async function startTeamV2(config2) {
     if (resolvedBinaryPaths[provider]) continue;
     if (missingBinaryReasons.some((m) => m.agentType === provider)) continue;
     try {
-      resolvedBinaryPaths[provider] = resolveValidatedBinaryPath(provider);
+      resolvedBinaryPaths[provider] = resolvePreflightBinaryPath(provider).path;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       missingBinaryReasons.push({ agentType: provider, reason });
@@ -85421,9 +85583,13 @@ function buildEnvExportPrefix(vars) {
   return parts.length > 0 ? parts.join("; ") + "; " : "";
 }
 function runClaudeOutsideTmux(cwd2, args, _sessionId) {
-  const rawClaudeCmd = buildTmuxShellCommand("claude", args);
-  const envPrefix = buildEnvExportPrefix(TMUX_ENV_FORWARD);
-  const claudeCmd = wrapWithLoginShell(`${envPrefix}sleep 0.3; perl -e 'use POSIX;tcflush(0,TCIFLUSH)' 2>/dev/null; ${rawClaudeCmd}`);
+  const forwardedEnv = Object.fromEntries(
+    TMUX_ENV_FORWARD.map((name) => [name, process.env[name]]).filter(([, value]) => value !== void 0)
+  );
+  const rawClaudeCmd = isNativeWindowsShell() ? buildTmuxShellCommandWithEnv("claude", args, forwardedEnv) : buildTmuxShellCommand("claude", args);
+  const envPrefix = !isNativeWindowsShell() && Object.keys(forwardedEnv).length > 0 ? buildEnvExportPrefix(TMUX_ENV_FORWARD) : "";
+  const preflight = process.platform === "win32" ? envPrefix : `${envPrefix}sleep 0.3; perl -e 'use POSIX;tcflush(0,TCIFLUSH)' 2>/dev/null; `;
+  const claudeCmd = wrapWithLoginShell(`${preflight}${rawClaudeCmd}`);
   const sessionName2 = buildTmuxSessionName(cwd2);
   try {
     tmuxExec(["new-session", "-d", "-s", sessionName2, "-c", cwd2, claudeCmd], { stripTmux: true, stdio: "inherit" });
@@ -87496,7 +87662,7 @@ function spawnAutoresearchSetupTmux(repoRoot) {
   }
   const sessionName2 = `omc-autoresearch-setup-${Date.now().toString(36)}`;
   const codexHome = prepareAutoresearchSetupCodexHome(repoRoot, sessionName2);
-  const claudeCommand = buildTmuxShellCommand("env", [`CODEX_HOME=${codexHome}`, "claude", CLAUDE_BYPASS_FLAG2]);
+  const claudeCommand = buildTmuxShellCommandWithEnv("claude", [CLAUDE_BYPASS_FLAG2], { CODEX_HOME: codexHome });
   const wrappedClaudeCommand = wrapWithLoginShell(claudeCommand);
   const paneId = tmuxExec(
     ["new-session", "-d", "-P", "-F", "#{pane_id}", "-s", sessionName2, "-c", repoRoot, wrappedClaudeCommand],
