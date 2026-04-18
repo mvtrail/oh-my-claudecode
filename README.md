@@ -31,6 +31,12 @@ _Don't learn Claude Code. Just use OMC._
 | --- | --- |
 | Sigrid Jin | [@sigridjineth](https://github.com/sigridjineth) |
 
+## Document Specialists
+
+| Name | GitHub |
+| --- | --- |
+| devswha | [@devswha](https://github.com/devswha) |
+
 ## Top Collaborators
 
 | Name | GitHub | Commits |
