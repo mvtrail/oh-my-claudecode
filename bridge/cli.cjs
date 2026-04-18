@@ -85588,7 +85588,7 @@ function runClaudeOutsideTmux(cwd2, args, _sessionId) {
   );
   const rawClaudeCmd = isNativeWindowsShell() ? buildTmuxShellCommandWithEnv("claude", args, forwardedEnv) : buildTmuxShellCommand("claude", args);
   const envPrefix = !isNativeWindowsShell() && Object.keys(forwardedEnv).length > 0 ? buildEnvExportPrefix(TMUX_ENV_FORWARD) : "";
-  const preflight = process.platform === "win32" ? envPrefix : `${envPrefix}sleep 0.3; perl -e 'use POSIX;tcflush(0,TCIFLUSH)' 2>/dev/null; `;
+  const preflight = isNativeWindowsShell() ? envPrefix : `${envPrefix}sleep 0.3; perl -e 'use POSIX;tcflush(0,TCIFLUSH)' 2>/dev/null; `;
   const claudeCmd = wrapWithLoginShell(`${preflight}${rawClaudeCmd}`);
   const sessionName2 = buildTmuxSessionName(cwd2);
   try {

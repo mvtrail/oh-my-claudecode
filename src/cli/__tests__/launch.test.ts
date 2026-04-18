@@ -1245,4 +1245,20 @@ describe('runClaude outside-tmux — env forwarding', () => {
 
     Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
   });
+
+  it('keeps POSIX preflight commands on MSYS2 Windows shells', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    process.env.CLAUDE_CONFIG_DIR = '/custom/config';
+    vi.mocked(isNativeWindowsShell).mockReturnValue(false);
+
+    runClaude('/tmp', ['--print-system-prompt', 'hello world'], 'sid');
+
+    const rawCommand = vi.mocked(wrapWithLoginShell).mock.calls[0][0];
+    expect(rawCommand).toContain('export CLAUDE_CONFIG_DIR=/custom/config');
+    expect(rawCommand).toContain('sleep 0.3');
+    expect(rawCommand).toContain("perl -e 'use POSIX;tcflush(0,TCIFLUSH)' 2>/dev/null;");
+
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+  });
 });

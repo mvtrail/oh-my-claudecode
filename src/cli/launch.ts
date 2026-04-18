@@ -476,7 +476,7 @@ function runClaudeOutsideTmux(cwd: string, args: string[], _sessionId: string): 
   // A short sleep lets the response arrive, then tcflush discards it.
   // Wrap in login shell so .bashrc/.zshrc are sourced (PATH, nvm, etc.)
   // Env exports are injected after RC sourcing so they override stale tmux server env.
-  const preflight = process.platform === 'win32'
+  const preflight = isNativeWindowsShell()
     ? envPrefix
     : `${envPrefix}sleep 0.3; perl -e 'use POSIX;tcflush(0,TCIFLUSH)' 2>/dev/null; `;
   const claudeCmd = wrapWithLoginShell(`${preflight}${rawClaudeCmd}`);
