@@ -21167,6 +21167,10 @@ function validateSlackUrl(webhookUrl) {
 function validateWebhookUrl(url) {
   try {
     const parsed = new URL(url);
+    if (parsed.protocol === "http:") {
+      const hostname4 = parsed.hostname.toLowerCase();
+      return hostname4 === "localhost" || hostname4 === "127.0.0.1" || hostname4 === "::1" || hostname4 === "0.0.0.0";
+    }
     return parsed.protocol === "https:";
   } catch {
     return false;
@@ -21302,7 +21306,9 @@ async function sendTelegram(config2, payload) {
             if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
               let messageId;
               try {
-                const body2 = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+                const body2 = JSON.parse(
+                  Buffer.concat(chunks).toString("utf-8")
+                );
                 if (body2?.result?.message_id !== void 0) {
                   messageId = String(body2.result.message_id);
                 }
@@ -21408,7 +21414,7 @@ async function sendSlackBot(config2, payload) {
     const response = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${botToken}`,
+        Authorization: `Bearer ${botToken}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({ channel: channelId, text }),

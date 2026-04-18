@@ -127,6 +127,16 @@ function validateSlackUrl(webhookUrl: string): boolean {
 function validateWebhookUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
+    // Allow HTTP for localhost/127.0.0.1 (local development)
+    if (parsed.protocol === "http:") {
+      const hostname = parsed.hostname.toLowerCase();
+      return (
+        hostname === "localhost" ||
+        hostname === "127.0.0.1" ||
+        hostname === "::1" ||
+        hostname === "0.0.0.0"
+      );
+    }
     return parsed.protocol === "https:";
   } catch {
     return false;
@@ -298,11 +308,17 @@ export async function sendTelegram(
           const chunks: Buffer[] = [];
           res.on("data", (chunk: Buffer) => chunks.push(chunk));
           res.on("end", () => {
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            if (
+              res.statusCode &&
+              res.statusCode >= 200 &&
+              res.statusCode < 300
+            ) {
               // Parse response to extract message_id
               let messageId: string | undefined;
               try {
-                const body = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+                const body = JSON.parse(
+                  Buffer.concat(chunks).toString("utf-8"),
+                );
                 if (body?.result?.message_id !== undefined) {
                   messageId = String(body.result.message_id);
                 }
@@ -449,7 +465,7 @@ export async function sendSlackBot(
     const response = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${botToken}`,
+        Authorization: `Bearer ${botToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ channel: channelId, text }),
@@ -464,7 +480,11 @@ export async function sendSlackBot(
       };
     }
 
-    const data = await response.json() as { ok: boolean; ts?: string; error?: string };
+    const data = (await response.json()) as {
+      ok: boolean;
+      ts?: string;
+      error?: string;
+    };
     if (!data.ok) {
       return {
         platform: "slack-bot",
@@ -558,7 +578,9 @@ function getEffectivePlatformConfig<T>(
   config: NotificationConfig,
   event: NotificationEvent,
 ): T | undefined {
-  const topLevel = config[platform as keyof NotificationConfig] as T | undefined;
+  const topLevel = config[platform as keyof NotificationConfig] as
+    | T
+    | undefined;
   const eventConfig = config.events?.[event];
   const eventPlatform = eventConfig?.[platform as keyof typeof eventConfig];
 
@@ -652,12 +674,11 @@ export async function dispatchNotifications(
   }
 
   // Slack Bot
-  const slackBotConfig =
-    getEffectivePlatformConfig<SlackBotNotificationConfig>(
-      "slack-bot",
-      config,
-      event,
-    );
+  const slackBotConfig = getEffectivePlatformConfig<SlackBotNotificationConfig>(
+    "slack-bot",
+    config,
+    event,
+  );
   if (slackBotConfig?.enabled) {
     promises.push(sendSlackBot(slackBotConfig, payloadFor("slack-bot")));
   }
@@ -739,33 +760,33 @@ const execFileAsync = promisify(execFile);
  */
 export async function sendCustomWebhook(
   integration: CustomIntegration,
-  payload: NotificationPayload
+  payload: NotificationPayload,
 ): Promise<NotificationResult> {
   const config = integration.config as WebhookIntegrationConfig;
-  
+
   try {
     // Interpolate template variables
     const url = interpolateTemplate(config.url, payload);
     const body = interpolateTemplate(config.bodyTemplate, payload);
-    
+
     // Prepare headers
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(config.headers)) {
       headers[key] = interpolateTemplate(value, payload);
     }
-    
+
     // Use native fetch (Node.js 18+)
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), config.timeout);
-    
+
     try {
       const response = await fetch(url, {
         method: config.method,
         headers,
-        body: config.method !== 'GET' ? body : undefined,
+        body: config.method !== "GET" ? body : undefined,
         signal: controller.signal,
       });
-      
+
       if (!response.ok) {
         return {
           platform: "webhook",
@@ -773,7 +794,7 @@ export async function sendCustomWebhook(
           error: `HTTP ${response.status}: ${response.statusText}`,
         };
       }
-      
+
       return {
         platform: "webhook",
         success: true,
@@ -796,20 +817,20 @@ export async function sendCustomWebhook(
  */
 export async function sendCustomCli(
   integration: CustomIntegration,
-  payload: NotificationPayload
+  payload: NotificationPayload,
 ): Promise<NotificationResult> {
   const config = integration.config as CliIntegrationConfig;
-  
+
   try {
     // Interpolate template variables into arguments
     const args = config.args.map((arg) => interpolateTemplate(arg, payload));
-    
+
     // Execute using execFile (array args, no shell injection possible)
     await execFileAsync(config.command, args, {
       timeout: config.timeout,
       killSignal: "SIGTERM",
     });
-    
+
     return {
       platform: "webhook", // Group with webhooks in results
       success: true,
@@ -828,16 +849,16 @@ export async function sendCustomCli(
  */
 export async function dispatchCustomIntegrations(
   event: string,
-  payload: NotificationPayload
+  payload: NotificationPayload,
 ): Promise<NotificationResult[]> {
   const integrations = getCustomIntegrationsForEvent(event);
   if (integrations.length === 0) return [];
-  
+
   const results: NotificationResult[] = [];
-  
+
   for (const integration of integrations) {
     let result: NotificationResult;
-    
+
     if (integration.type === "webhook") {
       result = await sendCustomWebhook(integration, payload);
     } else if (integration.type === "cli") {
@@ -849,9 +870,9 @@ export async function dispatchCustomIntegrations(
         error: `Unknown integration type: ${integration.type}`,
       };
     }
-    
+
     results.push(result);
   }
-  
+
   return results;
 }

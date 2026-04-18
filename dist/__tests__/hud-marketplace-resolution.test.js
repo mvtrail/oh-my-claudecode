@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { OMC_PLUGIN_ROOT_ENV } from '../lib/env-vars.js';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,6 +25,18 @@ afterEach(() => {
         const dir = tempDirs.pop();
         if (dir)
             rmSync(dir, { recursive: true, force: true });
+    }
+});
+// plugin-setup.mjs rewrites hooks/hooks.json with an absolute node binary path
+// (it always resolves the path relative to its own __dirname, ignoring CLAUDE_CONFIG_DIR).
+// Restore the committed version after all tests in this file so sibling test
+// suites (e.g. setup-contracts-regression) don't see a mutated working tree.
+afterAll(() => {
+    try {
+        execFileSync('git', ['checkout', '--', 'hooks/hooks.json'], { cwd: root, stdio: 'pipe' });
+    }
+    catch {
+        // Non-fatal: hooks.json may already be clean or git may be unavailable.
     }
 });
 describe('HUD marketplace resolution', () => {

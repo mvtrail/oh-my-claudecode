@@ -9,11 +9,11 @@
  * Scanning approach: narrow construction-pattern matching (not broad string literals)
  * to avoid false positives and allowlist bloat.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, existsSync } from 'fs';
-import { join, relative } from 'path';
+import { dirname, join, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const REPO_ROOT = join(__dirname, '..', '..');
@@ -332,6 +332,19 @@ describe('Contract 5: no hardcoded ~/.claude in LLM-consumed artifacts', () => {
 // Issue #2348 — plugin hook delivery must be portable
 describe('Contract 9: hooks/hooks.json portability', () => {
     const HOOKS_JSON_PATH = join(REPO_ROOT, 'hooks', 'hooks.json');
+    // Other test suites (e.g. hud-marketplace-resolution) call plugin-setup.mjs which
+    // rewrites hooks/hooks.json with an absolute node binary path. When vitest runs test
+    // files in parallel workers, that mutation can arrive before Contract 9 reads the
+    // file. Restore to the committed state before this suite runs so the check is always
+    // against the canonical source, not a side-effected copy.
+    beforeAll(() => {
+        try {
+            execFileSync('git', ['checkout', '--', 'hooks/hooks.json'], { cwd: REPO_ROOT, stdio: 'pipe' });
+        }
+        catch {
+            // Non-fatal: if git is unavailable or hooks.json is already clean, proceed anyway.
+        }
+    });
     it('all hook commands reference $CLAUDE_PLUGIN_ROOT', () => {
         if (!existsSync(HOOKS_JSON_PATH))
             return;
