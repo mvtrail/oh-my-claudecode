@@ -15,7 +15,7 @@ import {
   ensureSessionStateDir,
   ensureOmcDir,
   listSessionIds,
-  validateWorkingDirectory,
+  getWorktreeRoot,
 } from './worktree-paths.js';
 import { atomicWriteJsonSync } from './atomic-write.js';
 
@@ -51,7 +51,8 @@ export function canClearStateForSession(
 // ---------------------------------------------------------------------------
 
 function resolveStateRoot(directory?: string): string {
-  return validateWorkingDirectory(directory);
+  const baseDir = directory || process.cwd();
+  return getWorktreeRoot(baseDir) || baseDir;
 }
 
 /**

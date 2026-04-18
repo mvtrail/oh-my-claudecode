@@ -1,21 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
-
-vi.mock('../worktree-paths.js', async () => {
-  const actual = await vi.importActual<typeof import('../worktree-paths.js')>('../worktree-paths.js');
-  return {
-    ...actual,
-    validateWorkingDirectory: vi.fn((workingDirectory?: string) => {
-      if (!workingDirectory) {
-        return process.cwd();
-      }
-      return actual.getWorktreeRoot(workingDirectory) || workingDirectory;
-    }),
-  };
-});
 
 import { writeModeState, readModeState, clearModeStateFile } from '../mode-state-io.js';
 
