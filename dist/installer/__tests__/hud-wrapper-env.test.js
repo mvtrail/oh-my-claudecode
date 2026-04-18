@@ -229,6 +229,13 @@ describe('HUD wrapper — OMC_PLUGIN_ROOT resolution', () => {
         expect(txt).not.toContain('Workspace/oh-my-claudecode');
         expect(txt).not.toContain('projects/oh-my-claudecode');
     });
+    it('uses shell:true only for Windows npm root discovery', () => {
+        const txt = readFileSync(TEMPLATE_TXT, 'utf8');
+        expect(txt).toContain('const isWin = process.platform === "win32";');
+        expect(txt).toContain('const npmCommand = isWin ? "npm.cmd" : "npm";');
+        expect(txt).toContain('shell: isWin');
+        expect(txt).not.toContain('shell: true');
+    });
 });
 describe('HUD wrapper — fixture sanity', () => {
     it('the template txt file exists in the repo', () => {
