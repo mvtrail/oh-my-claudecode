@@ -269,27 +269,32 @@ describe('win32 spawn hardening (#2721)', () => {
   // below spawn npm / npx, which resolve to npm.cmd / npx.cmd on Windows, so
   // each one needs shell:true gated on win32. CI is Ubuntu-only, so static
   // source assertions are the only regression guard.
+  //
+  // Each regex is scoped to a single options object via [^}]*? — if the shell
+  // flag is dropped from this specific call site, the match cannot silently
+  // succeed by finding the same flag in a sibling call below. Keep the
+  // option objects flat (no nested braces) so this scoping holds.
   const testDirPath = dirname(fileURLToPath(import.meta.url));
   const sourcePath = join(testDirPath, '..', '..', 'hooks', 'plugin-patterns', 'index.ts');
 
   it('runTypeCheck spawnSync("npx", …) must pass shell:true on win32', () => {
     const src = readFileSync(sourcePath, 'utf-8');
     expect(src).toMatch(
-      /spawnSync\('npx', \['tsc', '--noEmit'\][\s\S]*?shell:\s*process\.platform === 'win32'/
+      /spawnSync\('npx', \['tsc', '--noEmit'\], \{[^}]*?shell:\s*process\.platform === 'win32'[^}]*?\}\s*\);/
     );
   });
 
   it('runTests execFileSync("npm test", …) must pass shell:true on win32', () => {
     const src = readFileSync(sourcePath, 'utf-8');
     expect(src).toMatch(
-      /execFileSync\('npm', \['test'\][\s\S]*?shell:\s*process\.platform === 'win32'/
+      /execFileSync\('npm', \['test'\], \{[^}]*?shell:\s*process\.platform === 'win32'[^}]*?\}\s*\);/
     );
   });
 
   it('runLint execFileSync("npm run lint", …) must pass shell:true on win32', () => {
     const src = readFileSync(sourcePath, 'utf-8');
     expect(src).toMatch(
-      /execFileSync\('npm', \['run', 'lint'\][\s\S]*?shell:\s*process\.platform === 'win32'/
+      /execFileSync\('npm', \['run', 'lint'\], \{[^}]*?shell:\s*process\.platform === 'win32'[^}]*?\}\s*\);/
     );
   });
 });
