@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -77,6 +77,47 @@ describe('keyword-detector.mjs mode-message dispatch', () => {
         const state = JSON.parse(readFileSync(ralplanStatePath, 'utf-8'));
         expect(state.active).toBe(true);
         expect(state.awaiting_confirmation).toBe(true);
+    });
+    it('launches the approved Team follow-up instead of re-entering ralplan when OMX planning artifacts already exist', () => {
+        const cwd = mkdtempSync(join(tmpdir(), 'keyword-detector-ralplan-followup-'));
+        const sessionId = 'session-2714-followup';
+        const sessionStateDir = join(cwd, '.omc', 'state', 'sessions', sessionId);
+        const omxPlansDir = join(cwd, '.omx', 'plans');
+        mkdirSync(sessionStateDir, { recursive: true });
+        mkdirSync(omxPlansDir, { recursive: true });
+        writeFileSync(join(sessionStateDir, 'ralplan-state.json'), JSON.stringify({
+            active: false,
+            session_id: sessionId,
+            current_phase: 'complete',
+            completed_at: new Date().toISOString(),
+        }, null, 2));
+        writeFileSync(join(omxPlansDir, 'prd-capture-page-ui-draft.md'), [
+            '# PRD',
+            '',
+            '## Acceptance criteria',
+            '- done',
+            '',
+            '## Requirement coverage map',
+            '- req -> impl',
+            '',
+            'omx team ".omx/plans/ralplan-capture-page-ui-draft-v7.md"',
+            '',
+        ].join('\n'));
+        writeFileSync(join(omxPlansDir, 'test-spec-capture-page-ui-draft.md'), [
+            '# Test Spec',
+            '',
+            '## Unit coverage',
+            '- unit',
+            '',
+            '## Verification mapping',
+            '- verify',
+            '',
+        ].join('\n'));
+        const output = runKeywordDetector('team', cwd, sessionId);
+        const context = output.hookSpecificOutput?.additionalContext ?? '';
+        expect(output.continue).toBe(true);
+        expect(context).toContain('TEAM');
+        expect(context).not.toContain('[MAGIC KEYWORD: RALPLAN]');
     });
     it('does not activate ralplan from a delegated /ask codex payload', () => {
         const tempDir = mkdtempSync(join(tmpdir(), 'keyword-detector-ask-codex-'));

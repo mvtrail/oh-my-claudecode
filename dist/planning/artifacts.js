@@ -6,7 +6,7 @@
  * and extracts approved execution launch hints embedded in PRD markdown.
  */
 import { readdirSync, readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { basename, join } from "path";
 function readFileSafe(path) {
     try {
         return readFileSync(path, "utf-8");
@@ -32,36 +32,49 @@ function getSectionContent(markdown, heading) {
 function hasRequiredSections(markdown, headings) {
     return headings.every((heading) => getSectionContent(markdown, heading) !== null);
 }
+function getPlansDirCandidates(cwd) {
+    return [join(cwd, ".omc", "plans"), join(cwd, ".omx", "plans")];
+}
+function sortArtifactPathsDescending(paths) {
+    return [...paths].sort((a, b) => {
+        const fileCompare = basename(b).localeCompare(basename(a));
+        if (fileCompare !== 0) {
+            return fileCompare;
+        }
+        return b.localeCompare(a);
+    });
+}
 /**
- * Read planning artifacts from .omc/plans/ directory.
+ * Read planning artifacts from .omc/.omx plans directories.
  * Returns paths to all PRD and test-spec files found.
  */
 export function readPlanningArtifacts(cwd) {
-    const plansDir = join(cwd, ".omc", "plans");
-    if (!existsSync(plansDir)) {
-        return { prdPaths: [], testSpecPaths: [] };
-    }
     let entries;
-    try {
-        entries = readdirSync(plansDir);
-    }
-    catch {
-        return { prdPaths: [], testSpecPaths: [] };
-    }
     const prdPaths = [];
     const testSpecPaths = [];
-    for (const entry of entries) {
-        if (entry.startsWith("prd-") && entry.endsWith(".md")) {
-            prdPaths.push(join(plansDir, entry));
+    for (const plansDir of getPlansDirCandidates(cwd)) {
+        if (!existsSync(plansDir)) {
+            continue;
         }
-        else if (entry.startsWith("test-spec-") && entry.endsWith(".md")) {
-            testSpecPaths.push(join(plansDir, entry));
+        try {
+            entries = readdirSync(plansDir);
+        }
+        catch {
+            continue;
+        }
+        for (const entry of entries) {
+            if (entry.startsWith("prd-") && entry.endsWith(".md")) {
+                prdPaths.push(join(plansDir, entry));
+            }
+            else if (entry.startsWith("test-spec-") && entry.endsWith(".md")) {
+                testSpecPaths.push(join(plansDir, entry));
+            }
         }
     }
-    // Sort descending so newest (lexicographically last) is first
-    prdPaths.sort((a, b) => b.localeCompare(a));
-    testSpecPaths.sort((a, b) => b.localeCompare(a));
-    return { prdPaths, testSpecPaths };
+    return {
+        prdPaths: sortArtifactPathsDescending(prdPaths),
+        testSpecPaths: sortArtifactPathsDescending(testSpecPaths),
+    };
 }
 /**
  * Returns true when the latest PRD and latest test spec contain
@@ -86,15 +99,16 @@ export function isPlanningComplete(artifacts) {
         ]));
 }
 /**
- * Regex patterns for extracting omc team/ralph launch commands from PRD markdown.
+ * Regex patterns for extracting omc/omx team/ralph launch commands from PRD markdown.
  *
  * Matches lines like:
  *   omc team 3:claude "implement the feature"
+ *   omx team ".omx/plans/ralplan-feature.md"
  *   omc team 2:codex "fix the bug" --linked-ralph
- *   omc ralph "do the work"
+ *   omx ralph ".omx/plans/ralplan-feature.md"
  */
-const TEAM_LAUNCH_RE = /\bomc\s+team\s+(?:(\d+):(\w+)\s+)?"([^"]+)"((?:\s+--[\w-]+)*)/;
-const RALPH_LAUNCH_RE = /\bomc\s+ralph\s+"([^"]+)"((?:\s+--[\w-]+)*)/;
+const TEAM_LAUNCH_RE = /\bom[cx]\s+team\s+(?:(\d+):(\w+)\s+)?"([^"]+)"((?:\s+--[\w-]+)*)/;
+const RALPH_LAUNCH_RE = /\bom[cx]\s+ralph\s+"([^"]+)"((?:\s+--[\w-]+)*)/;
 function parseFlags(flagStr) {
     return {
         linkedRalph: /--linked-ralph/.test(flagStr),

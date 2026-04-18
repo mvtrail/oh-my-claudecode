@@ -943,12 +943,6 @@ async function main() {
       matches.push({ name: 'wiki', args: '' });
     }
 
-    // No matches - pass through
-    if (matches.length === 0) {
-      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
-      return;
-    }
-
     // Deduplicate matches by keyword name before conflict resolution
     const seen = new Set();
     const uniqueMatches = [];
@@ -978,10 +972,16 @@ async function main() {
     // cycle completed and left an approved plan with a launch hint.
     if (followupPlanner && planningArtifacts) {
       // Detect if ralplan state exists (was recently active) — serves as "prior skill = ralplan" signal
-      const ralplanStatePath = sessionId && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/.test(sessionId)
-        ? join(directory, '.omc', 'state', 'sessions', sessionId, 'ralplan-state.json')
-        : join(directory, '.omc', 'state', 'ralplan-state.json');
-      const ralplanWasActive = existsSync(ralplanStatePath);
+      const ralplanStatePaths = sessionId && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,255}$/.test(sessionId)
+        ? [
+            join(directory, '.omc', 'state', 'sessions', sessionId, 'ralplan-state.json'),
+            join(directory, '.omx', 'state', 'sessions', sessionId, 'ralplan-state.json'),
+          ]
+        : [
+            join(directory, '.omc', 'state', 'ralplan-state.json'),
+            join(directory, '.omx', 'state', 'ralplan-state.json'),
+          ];
+      const ralplanWasActive = ralplanStatePaths.some(statePath => existsSync(statePath));
 
       if (ralplanWasActive) {
         const artifacts = planningArtifacts.readPlanningArtifacts(directory);
@@ -1000,6 +1000,15 @@ async function main() {
           return;
         }
       }
+    }
+
+    // No matches - pass through.
+    // Keep this after approved follow-up handling so short post-ralplan
+    // prompts like "team" can launch the approved execution path even
+    // though generic team keyword auto-detection is disabled.
+    if (matches.length === 0) {
+      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
+      return;
     }
 
     // Record detected keywords to flow trace

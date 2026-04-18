@@ -96,6 +96,33 @@ describe("planning/artifacts", () => {
       expect(result.prdPaths).toHaveLength(2);
       expect(result.prdPaths[0]).toContain("prd-bbb.md");
     });
+
+    it("reads artifacts from .omx/plans when OMX writes the planning outputs", () => {
+      const omxPlansDir = join(testDir, ".omx", "plans");
+      mkdirSync(omxPlansDir, { recursive: true });
+      writeFileSync(join(omxPlansDir, "prd-omx.md"), "# PRD");
+      writeFileSync(join(omxPlansDir, "test-spec-omx.md"), "# Test Spec");
+
+      const result = readPlanningArtifacts(testDir);
+
+      expect(result.prdPaths).toHaveLength(1);
+      expect(result.prdPaths[0]).toContain(join(".omx", "plans", "prd-omx.md"));
+      expect(result.testSpecPaths).toHaveLength(1);
+      expect(result.testSpecPaths[0]).toContain(join(".omx", "plans", "test-spec-omx.md"));
+    });
+
+    it("prefers the lexicographically latest artifact name across .omc and .omx plan roots", () => {
+      const omxPlansDir = join(testDir, ".omx", "plans");
+      mkdirSync(omxPlansDir, { recursive: true });
+      writeFileSync(join(plansDir, "prd-aaa.md"), "# PRD A");
+      writeFileSync(join(omxPlansDir, "prd-zzz.md"), "# PRD Z");
+
+      const result = readPlanningArtifacts(testDir);
+
+      expect(result.prdPaths).toHaveLength(2);
+      expect(result.prdPaths[0]).toContain(join(".omx", "plans", "prd-zzz.md"));
+      expect(result.prdPaths[1]).toContain(join(".omc", "plans", "prd-aaa.md"));
+    });
   });
 
   describe("isPlanningComplete", () => {
@@ -234,6 +261,41 @@ describe("planning/artifacts", () => {
       expect(isPlanningComplete(readPlanningArtifacts(testDir))).toBe(true);
     });
 
+    it("treats valid OMX planning artifacts as planning-complete", () => {
+      const omxPlansDir = join(testDir, ".omx", "plans");
+      mkdirSync(omxPlansDir, { recursive: true });
+      writeFileSync(
+        join(omxPlansDir, "prd-feature.md"),
+        [
+          "# PRD",
+          "",
+          "## Acceptance criteria",
+          "- done",
+          "",
+          "## Requirement coverage map",
+          "- req -> impl",
+          "",
+          'omx team ".omx/plans/ralplan-feature.md"',
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        join(omxPlansDir, "test-spec-feature.md"),
+        [
+          "# Test Spec",
+          "",
+          "## Unit coverage",
+          "- unit",
+          "",
+          "## Verification mapping",
+          "- verify",
+          "",
+        ].join("\n"),
+      );
+
+      expect(isPlanningComplete(readPlanningArtifacts(testDir))).toBe(true);
+    });
+
     it("treats required heading matches as case-insensitive", () => {
       writeFileSync(
         join(plansDir, "prd-feature.md"),
@@ -339,6 +401,33 @@ describe("planning/artifacts", () => {
       expect(result!.task).toBe("implement the feature");
       expect(result!.workerCount).toBeUndefined();
       expect(result!.agentType).toBeUndefined();
+    });
+
+    it("extracts OMX team launch hints from PRDs written under .omx/plans", () => {
+      const omxPlansDir = join(testDir, ".omx", "plans");
+      mkdirSync(omxPlansDir, { recursive: true });
+      writeFileSync(
+        join(omxPlansDir, "prd-feature.md"),
+        [
+          "# PRD",
+          "",
+          "## Acceptance criteria",
+          "- done",
+          "",
+          "## Requirement coverage map",
+          "- req -> impl",
+          "",
+          'omx team ".omx/plans/ralplan-capture-page-ui-draft-v7.md"',
+          "",
+        ].join("\n"),
+      );
+
+      const result = readApprovedExecutionLaunchHint(testDir, "team");
+
+      expect(result).not.toBeNull();
+      expect(result!.task).toBe(".omx/plans/ralplan-capture-page-ui-draft-v7.md");
+      expect(result!.command).toBe('omx team ".omx/plans/ralplan-capture-page-ui-draft-v7.md"');
+      expect(result!.sourcePath).toContain(join(".omx", "plans", "prd-feature.md"));
     });
 
     it("detects --linked-ralph flag", () => {
