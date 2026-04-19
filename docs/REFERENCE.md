@@ -12,7 +12,7 @@ Complete reference for oh-my-claudecode. For quick start, see the main [README.m
 - [CLI Commands: ask/team/session](#cli-commands-askteamsession)
 - [Legacy MCP Team Runtime Tools (Deprecated)](#legacy-mcp-team-runtime-tools-deprecated)
 - [Agents (29 Total)](#agents-29-total)
-- [Skills (32 Total)](#skills-32-total)
+- [Skills (35 Total)](#skills-35-total)
 - [Slash Commands](#slash-commands)
 - [Hooks System](#hooks-system)
 - [Magic Keywords](#magic-keywords)
@@ -516,9 +516,9 @@ Always use `oh-my-claudecode:` prefix when calling via Task tool.
 
 ---
 
-## Skills (33 Total)
+## Skills (35 Total)
 
-Includes **32 canonical skills + 1 deprecated alias** (`psm`). Runtime truth comes from the builtin skill loader scanning `skills/*/SKILL.md` and expanding aliases declared in frontmatter.
+Includes **34 canonical skills + 1 deprecated alias** (`psm`). Runtime truth comes from the builtin skill loader scanning `skills/*/SKILL.md` and expanding aliases declared in frontmatter.
 
 | Skill                     | Description                                                      | Manual Command                              |
 | ------------------------- | ---------------------------------------------------------------- | ------------------------------------------- |
@@ -546,6 +546,7 @@ Includes **32 canonical skills + 1 deprecated alias** (`psm`). Runtime truth com
 | `ralph`                   | Persistence loop until verified completion                       | `/oh-my-claudecode:ralph`                   |
 | `ralplan`                 | Consensus planning alias for `/omc-plan --consensus`             | `/oh-my-claudecode:ralplan`                 |
 | `release`                 | Automated release workflow                                       | `/oh-my-claudecode:release`                 |
+| `self-improve`            | Autonomous evolutionary code improvement engine with tournament selection | `/oh-my-claudecode:self-improve`    |
 | `setup`                   | Unified setup entrypoint for install, diagnostics, and MCP configuration | `/oh-my-claudecode:setup`              |
 | `sciomc`                  | Parallel scientist orchestration                                 | `/oh-my-claudecode:sciomc`                  |
 | `skill`                   | Manage local skills (list/add/remove/search/edit)                | `/oh-my-claudecode:skill`                   |
@@ -554,6 +555,7 @@ Includes **32 canonical skills + 1 deprecated alias** (`psm`). Runtime truth com
 | `ultraqa`                 | QA cycle until goal is met                                       | `/oh-my-claudecode:ultraqa`                 |
 | `ultrawork`               | Maximum parallel throughput mode                                 | `/oh-my-claudecode:ultrawork`               |
 | `visual-verdict`          | Structured visual QA verdict for screenshot/reference comparisons | `/oh-my-claudecode:visual-verdict`          |
+| `wiki`                    | LLM Wiki — persistent markdown knowledge base that compounds across sessions | `/oh-my-claudecode:wiki`           |
 | `writer-memory`           | Agentic memory system for writing projects                       | `/oh-my-claudecode:writer-memory`           |
 
 

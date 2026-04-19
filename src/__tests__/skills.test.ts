@@ -69,10 +69,10 @@ describe('Builtin Skills', () => {
   });
 
   describe('createBuiltinSkills()', () => {
-    it('should return correct number of skills (33 canonical + 1 alias)', () => {
+    it('should return correct number of skills (34 canonical + 1 alias)', () => {
       const skills = createBuiltinSkills();
-      // 34 entries: 33 canonical skills + 1 deprecated alias (psm)
-      expect(skills).toHaveLength(34);
+      // 35 entries: 34 canonical skills + 1 deprecated alias (psm)
+      expect(skills).toHaveLength(35);
     });
 
     it('should return an array of BuiltinSkill objects', () => {
@@ -465,7 +465,8 @@ describe('Builtin Skills', () => {
       const skill = getBuiltinSkill('autoresearch');
       expect(skill).toBeDefined();
       expect(skill?.name).toBe('autoresearch');
-      expect(skill?.template).toContain('Stateful single-mission improvement loop');
+      expect(skill?.template).toContain('stateful skill for bounded, evaluator-driven iterative improvement');
+      expect(skill?.template).toContain('Single-mission only in v1');
       expect(skill?.template).toContain('max-runtime ceiling');
       expect(skill?.template).toContain('per-iteration evaluation JSON');
       expect(skill?.template).toContain('markdown decision logs');
@@ -547,14 +548,16 @@ describe('Builtin Skills', () => {
     it('should return canonical skill names by default', () => {
       const names = listBuiltinSkillNames();
 
-      expect(names).toHaveLength(33);
+      expect(names).toHaveLength(34);
       expect(names).toContain('ai-slop-cleaner');
       expect(names).toContain('ask');
       expect(names).toContain('autopilot');
+      expect(names).toContain('autoresearch');
       expect(names).toContain('cancel');
       expect(names).toContain('ccg');
       expect(names).toContain('configure-notifications');
       expect(names).toContain('ralph');
+      expect(names).toContain('self-improve');
       expect(names).toContain('ultrawork');
       expect(names).toContain('omc-plan');
       expect(names).toContain('omc-reference');
@@ -566,6 +569,7 @@ describe('Builtin Skills', () => {
       expect(names).toContain('setup');
       expect(names).toContain('trace');
       expect(names).toContain('visual-verdict');
+      expect(names).toContain('wiki');
       expect(names).not.toContain('swarm'); // removed in #1131
       expect(names).not.toContain('psm');
     });
@@ -581,10 +585,13 @@ describe('Builtin Skills', () => {
       const names = listBuiltinSkillNames({ includeAliases: true });
 
       // swarm alias removed in #1131, psm still exists
-      expect(names).toHaveLength(34);
+      expect(names).toHaveLength(35);
       expect(names).toContain('ai-slop-cleaner');
+      expect(names).toContain('autoresearch');
+      expect(names).toContain('self-improve');
       expect(names).toContain('trace');
       expect(names).toContain('visual-verdict');
+      expect(names).toContain('wiki');
       expect(names).not.toContain('swarm');
       expect(names).toContain('psm');
     });
