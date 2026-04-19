@@ -1,42 +1,32 @@
-# oh-my-claudecode v4.12.1: Bug Fixes
+# oh-my-claudecode v4.13.0: Bug Fixes
 
 ## Release Notes
 
-Release with **8 bug fixes** across **24 merged PRs**.
+Release with **2 bug fixes**, **2 other changes** across **4 merged PRs**.
 
 ### Highlights
 
-- **fix(hooks): align tier-alias routing proof with CC-native model resolution** (#2683)
-- **fix(models): align built-in Opus HIGH default with Claude Opus 4.7** (#2685)
-- **fix(agents): replace scanner-bait commit placeholders** (#2682)
+- **fix(installer): Copy hooks lib modules during update** (#2728)
+- **fix(hooks, windows): pass shell:true to plugin-patterns npm/npx spawns** (#2722)
 
 ### Bug Fixes
 
-- **fix(hooks): align tier-alias routing proof with CC-native model resolution** (#2683)
-- **fix(models): align built-in Opus HIGH default with Claude Opus 4.7** (#2685)
-- **fix(agents): replace scanner-bait commit placeholders** (#2682)
-- **fix(installer): preserve remote MCP transport type during registry sync** (#2680)
-- **fix(team): preserve Gemini team lanes when preflight path probing false-negatives** (#2676)
-- **fix(team): close #2659 with the clean prompt tag sanitizer diff** (#2673)
-- **fix(notifications): close #2660 with the clean tmux-tail diff** (#2674)
-- **fix(hooks): ignore workflow keywords inside delegated ask prompts** (#2672)
+- **fix(installer): Copy hooks lib modules during update** (#2728)
+- **fix(hooks, windows): pass shell:true to plugin-patterns npm/npx spawns** (#2722)
 
-### Refactoring
+### Other Changes
 
-- **refactor(skill-state): harden stateful-skills keyword detection and state init**
-
-### Documentation
-
-- **docs: add Discord link to navigation in all README translations**
+- **Reland: autoresearch-as-a-skill migration (fixes conflicts vs #2716)** (#2727)
+- **Fix deep-interview threshold on native skill path** (#2724)
 
 ### Stats
 
-- **24 PRs merged** | **0 new features** | **8 bug fixes** | **0 security/hardening improvements** | **0 other changes**
+- **4 PRs merged** | **0 new features** | **2 bug fixes** | **0 security/hardening improvements** | **2 other changes**
 
 ### Install / Update
 
 ```bash
-npm install -g oh-my-claude-sisyphus@4.12.1
+npm install -g oh-my-claude-sisyphus@4.13.0
 ```
 
 Or reinstall the plugin:
@@ -44,4 +34,10 @@ Or reinstall the plugin:
 claude /install-plugin oh-my-claudecode
 ```
 
-**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-claudecode/compare/v4.12.0...v4.12.1
+**Full Changelog**: https://github.com/Yeachan-Heo/oh-my-claudecode/compare/v4.12.1...v4.13.0
+
+## Contributors
+
+Thank you to all contributors who made this release possible!
+
+@50sotero @Gujiassh @Yeachan-Heo
