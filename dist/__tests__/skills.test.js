@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createBuiltinSkills, getBuiltinSkill, listBuiltinSkillNames, clearSkillsCache } from '../features/builtin-skills/skills.js';
@@ -304,7 +304,7 @@ describe('Builtin Skills', () => {
             const skill = getBuiltinSkill('deep-interview');
             expect(skill).toBeDefined();
             expect(skill?.template).toContain('Load runtime settings');
-            expect(skill?.template).toContain('ambiguityThreshold = 0.12');
+            expect(skill?.template).toContain('Resolve `omc.deepInterview.ambiguityThreshold` into `0.12`');
             expect(skill?.template).toContain('"threshold": 0.12,');
             expect(skill?.template).toContain('drops below 12%.');
             expect(skill?.template?.indexOf('Load runtime settings')).toBeLessThan(skill?.template?.indexOf('Initialize state') ?? Number.POSITIVE_INFINITY);
@@ -316,13 +316,13 @@ describe('Builtin Skills', () => {
             process.chdir(projectDir);
             writeFileSync(join(projectDir, '.claude', 'settings.json'), JSON.stringify({ omc: { deepInterview: { ambiguityThreshold: 0.12 } } }));
             const first = getBuiltinSkill('deep-interview');
-            expect(first?.template).toContain('ambiguityThreshold = 0.12');
+            expect(first?.template).toContain('Resolve `omc.deepInterview.ambiguityThreshold` into `0.12`');
             expect(first?.template).toContain('"threshold": 0.12,');
             writeFileSync(join(projectDir, '.claude', 'settings.json'), JSON.stringify({ omc: { deepInterview: { ambiguityThreshold: 0.33 } } }));
             const second = getBuiltinSkill('deep-interview');
-            expect(second?.template).toContain('ambiguityThreshold = 0.33');
+            expect(second?.template).toContain('Resolve `omc.deepInterview.ambiguityThreshold` into `0.33`');
             expect(second?.template).toContain('"threshold": 0.33,');
-            expect(second?.template).not.toContain('ambiguityThreshold = 0.12');
+            expect(second?.template).not.toContain('Resolve `omc.deepInterview.ambiguityThreshold` into `0.12`');
             expect(second?.template).not.toContain('"threshold": 0.12,');
         });
         it('replaces all hardcoded 20%/0.2 threshold references in deep-interview template (issue #2545)', () => {
@@ -337,11 +337,9 @@ describe('Builtin Skills', () => {
             // Previously-fixed references (regression guard)
             expect(t).toContain('"threshold": 0.15,');
             expect(t).toContain('drops below 15%.');
-            // Issue #2545: five previously-missed hardcoded references
-            expect(t).toContain('(default: 15%)'); // Purpose section
-            expect(t).toContain('(default 0.15)'); // Execution_Policy
+            expect(t).toContain('resolved threshold for this run'); // Purpose/Execution_Policy
             expect(t).toContain('Gate: ≤15% ambiguity'); // ASCII pipeline diagram
-            expect(t).toContain('(threshold: 15%).'); // Early-exit example message
+            expect(t).toContain('(threshold: 15%)'); // Early-exit example message
             expect(t).toContain('ambiguity ≤ 15%'); // Advanced pipeline description
             expect(t).toContain('"ambiguityThreshold": 0.15,'); // Advanced config snippet
             // Ensure none of the conflicting hardcoded 20% signals remain at those sites
@@ -351,6 +349,24 @@ describe('Builtin Skills', () => {
             expect(t).not.toContain('(threshold: 20%).');
             expect(t).not.toContain('ambiguity ≤ 20%');
             expect(t).not.toContain('"ambiguityThreshold": 0.2,');
+        });
+        it('ships a config-aware deep-interview SKILL.md for native skill-loader paths (issue #2723)', () => {
+            const raw = readFileSync(join(originalCwd, 'skills', 'deep-interview', 'SKILL.md'), 'utf-8');
+            expect(raw).toContain('Load runtime settings');
+            expect(raw).toContain('Read `[$CLAUDE_CONFIG_DIR|~/.claude]/settings.json` and `./.claude/settings.json`');
+            expect(raw).toContain('"threshold": <resolvedThreshold>,');
+            expect(raw).toContain('ambiguity drops below <resolvedThresholdPercent>');
+            expect(raw).toContain('Gate: ≤<resolvedThresholdPercent> ambiguity');
+            expect(raw).toContain('"ambiguityThreshold": <resolvedThreshold>,');
+            expect(raw).toContain('At or below the resolved threshold');
+            expect(raw).not.toContain('(default: 20%)');
+            expect(raw).not.toContain('(default 0.2)');
+            expect(raw).not.toContain('"threshold": 0.2,');
+            expect(raw).not.toContain('ambiguity drops below 20%');
+            expect(raw).not.toContain('Gate: ≤20% ambiguity');
+            expect(raw).not.toContain('(threshold: 20%).');
+            expect(raw).not.toContain('"ambiguityThreshold": 0.2,');
+            expect(raw).not.toContain('ambiguity ≤ 20%');
         });
         it('rewrites built-in skill command examples to plugin-safe bridge invocations when omc is unavailable', () => {
             process.env.CLAUDE_PLUGIN_ROOT = '/plugin-root';
