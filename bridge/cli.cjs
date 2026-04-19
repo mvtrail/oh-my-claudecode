@@ -35,9 +35,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/error.js
+// node_modules/commander/lib/error.js
 var require_error = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/error.js"(exports2) {
+  "node_modules/commander/lib/error.js"(exports2) {
     var CommanderError2 = class extends Error {
       /**
        * Constructs the CommanderError class
@@ -70,9 +70,9 @@ var require_error = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/argument.js
+// node_modules/commander/lib/argument.js
 var require_argument = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/argument.js"(exports2) {
+  "node_modules/commander/lib/argument.js"(exports2) {
     var { InvalidArgumentError: InvalidArgumentError2 } = require_error();
     var Argument2 = class {
       /**
@@ -197,9 +197,9 @@ var require_argument = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/help.js
+// node_modules/commander/lib/help.js
 var require_help = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/help.js"(exports2) {
+  "node_modules/commander/lib/help.js"(exports2) {
     var { humanReadableArgName } = require_argument();
     var Help2 = class {
       constructor() {
@@ -611,9 +611,9 @@ var require_help = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/option.js
+// node_modules/commander/lib/option.js
 var require_option = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/option.js"(exports2) {
+  "node_modules/commander/lib/option.js"(exports2) {
     var { InvalidArgumentError: InvalidArgumentError2 } = require_error();
     var Option2 = class {
       /**
@@ -883,9 +883,9 @@ var require_option = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/suggestSimilar.js
+// node_modules/commander/lib/suggestSimilar.js
 var require_suggestSimilar = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/suggestSimilar.js"(exports2) {
+  "node_modules/commander/lib/suggestSimilar.js"(exports2) {
     var maxDistance = 3;
     function editDistance(a, b) {
       if (Math.abs(a.length - b.length) > maxDistance)
@@ -963,9 +963,9 @@ var require_suggestSimilar = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/command.js
+// node_modules/commander/lib/command.js
 var require_command = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/lib/command.js"(exports2) {
+  "node_modules/commander/lib/command.js"(exports2) {
     var EventEmitter = require("node:events").EventEmitter;
     var childProcess = require("node:child_process");
     var path22 = require("node:path");
@@ -3006,9 +3006,9 @@ Expecting one of '${allowedValues.join("', '")}'`);
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/index.js
+// node_modules/commander/index.js
 var require_commander = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/index.js"(exports2) {
+  "node_modules/commander/index.js"(exports2) {
     var { Argument: Argument2 } = require_argument();
     var { Command: Command2 } = require_command();
     var { CommanderError: CommanderError2, InvalidArgumentError: InvalidArgumentError2 } = require_error();
@@ -33696,9 +33696,9 @@ var init_code_simplifier = __esm({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/safe-regex/lib/analyzer.js
+// node_modules/safe-regex/lib/analyzer.js
 var require_analyzer = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/safe-regex/lib/analyzer.js"(exports2, module2) {
+  "node_modules/safe-regex/lib/analyzer.js"(exports2, module2) {
     var AnalyzerOptions = class {
       constructor(heuristic_replimit) {
         this.heuristic_replimit = heuristic_replimit;
@@ -33760,9 +33760,9 @@ var require_analyzer = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-dotall-s-transform.js
+// node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-dotall-s-transform.js
 var require_compat_dotall_s_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-dotall-s-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-dotall-s-transform.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       // Whether `u` flag present. In which case we transform to
@@ -33812,9 +33812,9 @@ var require_compat_dotall_s_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-named-capturing-groups-transform.js
+// node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-named-capturing-groups-transform.js
 var require_compat_named_capturing_groups_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-named-capturing-groups-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-named-capturing-groups-transform.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       // To track the names of the groups, and return them
@@ -33856,9 +33856,9 @@ var require_compat_named_capturing_groups_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-x-flag-transform.js
+// node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-x-flag-transform.js
 var require_compat_x_flag_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-x-flag-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/compat-transpiler/transforms/compat-x-flag-transform.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       RegExp: function RegExp2(_ref) {
@@ -33871,9 +33871,9 @@ var require_compat_x_flag_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/transforms/index.js
+// node_modules/regexp-tree/dist/compat-transpiler/transforms/index.js
 var require_transforms = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/transforms/index.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/compat-transpiler/transforms/index.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       // "dotAll" `s` flag
@@ -33886,9 +33886,9 @@ var require_transforms = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/generator/index.js
+// node_modules/regexp-tree/dist/generator/index.js
 var require_generator = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/generator/index.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/generator/index.js"(exports2, module2) {
     "use strict";
     function gen(node) {
       return node ? generator[node.type](node) : "";
@@ -34026,9 +34026,9 @@ var require_generator = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/parser/unicode/parser-unicode-properties.js
+// node_modules/regexp-tree/dist/parser/unicode/parser-unicode-properties.js
 var require_parser_unicode_properties = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/parser/unicode/parser-unicode-properties.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/parser/unicode/parser-unicode-properties.js"(exports2, module2) {
     "use strict";
     var NON_BINARY_PROP_NAMES_TO_ALIASES = {
       General_Category: "gc",
@@ -34373,9 +34373,9 @@ var require_parser_unicode_properties = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/parser/generated/regexp-tree.js
+// node_modules/regexp-tree/dist/parser/generated/regexp-tree.js
 var require_regexp_tree = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/parser/generated/regexp-tree.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/parser/generated/regexp-tree.js"(exports2, module2) {
     "use strict";
     var _slicedToArray = /* @__PURE__ */ (function() {
       function sliceIterator(arr, i) {
@@ -35520,9 +35520,9 @@ var require_regexp_tree = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/parser/index.js
+// node_modules/regexp-tree/dist/parser/index.js
 var require_parser = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/parser/index.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/parser/index.js"(exports2, module2) {
     "use strict";
     var regexpTreeParser = require_regexp_tree();
     var generatedParseFn = regexpTreeParser.parse.bind(regexpTreeParser);
@@ -35534,9 +35534,9 @@ var require_parser = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/traverse/node-path.js
+// node_modules/regexp-tree/dist/traverse/node-path.js
 var require_node_path = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/traverse/node-path.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/traverse/node-path.js"(exports2, module2) {
     "use strict";
     var _createClass = /* @__PURE__ */ (function() {
       function defineProperties(target, props) {
@@ -35867,9 +35867,9 @@ var require_node_path = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/traverse/index.js
+// node_modules/regexp-tree/dist/traverse/index.js
 var require_traverse = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/traverse/index.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/traverse/index.js"(exports2, module2) {
     "use strict";
     var NodePath = require_node_path();
     function astTraverse(root2) {
@@ -36102,9 +36102,9 @@ var require_traverse = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/transform/index.js
+// node_modules/regexp-tree/dist/transform/index.js
 var require_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/transform/index.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/transform/index.js"(exports2, module2) {
     "use strict";
     var _createClass = /* @__PURE__ */ (function() {
       function defineProperties(target, props) {
@@ -36236,9 +36236,9 @@ var require_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/index.js
+// node_modules/regexp-tree/dist/compat-transpiler/index.js
 var require_compat_transpiler = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/index.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/compat-transpiler/index.js"(exports2, module2) {
     "use strict";
     var compatTransforms = require_transforms();
     var _transform = require_transform();
@@ -36272,9 +36272,9 @@ var require_compat_transpiler = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/utils/clone.js
+// node_modules/regexp-tree/dist/utils/clone.js
 var require_clone = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/utils/clone.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/utils/clone.js"(exports2, module2) {
     "use strict";
     module2.exports = function clone2(obj) {
       if (obj === null || typeof obj !== "object") {
@@ -36294,9 +36294,9 @@ var require_clone = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-surrogate-pair-to-single-unicode-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/char-surrogate-pair-to-single-unicode-transform.js
 var require_char_surrogate_pair_to_single_unicode_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-surrogate-pair-to-single-unicode-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/char-surrogate-pair-to-single-unicode-transform.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       shouldRun: function shouldRun(ast) {
@@ -36314,9 +36314,9 @@ var require_char_surrogate_pair_to_single_unicode_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-code-to-simple-char-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/char-code-to-simple-char-transform.js
 var require_char_code_to_simple_char_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-code-to-simple-char-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/char-code-to-simple-char-transform.js"(exports2, module2) {
     "use strict";
     var UPPER_A_CP = "A".codePointAt(0);
     var UPPER_Z_CP = "Z".codePointAt(0);
@@ -36368,9 +36368,9 @@ var require_char_code_to_simple_char_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-case-insensitive-lowercase-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/char-case-insensitive-lowercase-transform.js
 var require_char_case_insensitive_lowercase_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-case-insensitive-lowercase-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/char-case-insensitive-lowercase-transform.js"(exports2, module2) {
     "use strict";
     var UPPER_A_CP = "A".codePointAt(0);
     var UPPER_Z_CP = "Z".codePointAt(0);
@@ -36445,9 +36445,9 @@ var require_char_case_insensitive_lowercase_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-class-remove-duplicates-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/char-class-remove-duplicates-transform.js
 var require_char_class_remove_duplicates_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-class-remove-duplicates-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/char-class-remove-duplicates-transform.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       CharacterClass: function CharacterClass(path22) {
@@ -36467,9 +36467,9 @@ var require_char_class_remove_duplicates_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/transform/utils.js
+// node_modules/regexp-tree/dist/transform/utils.js
 var require_utils2 = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/transform/utils.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/transform/utils.js"(exports2, module2) {
     "use strict";
     function _toConsumableArray(arr) {
       if (Array.isArray(arr)) {
@@ -36528,9 +36528,9 @@ var require_utils2 = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/quantifiers-merge-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/quantifiers-merge-transform.js
 var require_quantifiers_merge_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/quantifiers-merge-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/quantifiers-merge-transform.js"(exports2, module2) {
     "use strict";
     var _require = require_utils2();
     var increaseQuantifierByOne = _require.increaseQuantifierByOne;
@@ -36596,9 +36596,9 @@ var require_quantifiers_merge_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/quantifier-range-to-symbol-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/quantifier-range-to-symbol-transform.js
 var require_quantifier_range_to_symbol_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/quantifier-range-to-symbol-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/quantifier-range-to-symbol-transform.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       Quantifier: function Quantifier(path22) {
@@ -36637,9 +36637,9 @@ var require_quantifier_range_to_symbol_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-class-classranges-to-chars-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/char-class-classranges-to-chars-transform.js
 var require_char_class_classranges_to_chars_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-class-classranges-to-chars-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/char-class-classranges-to-chars-transform.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       ClassRange: function ClassRange(path22) {
@@ -36655,9 +36655,9 @@ var require_char_class_classranges_to_chars_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-class-to-meta-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/char-class-to-meta-transform.js
 var require_char_class_to_meta_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-class-to-meta-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/char-class-to-meta-transform.js"(exports2, module2) {
     "use strict";
     function _toConsumableArray(arr) {
       if (Array.isArray(arr)) {
@@ -36799,9 +36799,9 @@ var require_char_class_to_meta_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-class-to-single-char-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/char-class-to-single-char-transform.js
 var require_char_class_to_single_char_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-class-to-single-char-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/char-class-to-single-char-transform.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       CharacterClass: function CharacterClass(path22) {
@@ -36858,9 +36858,9 @@ var require_char_class_to_single_char_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-escape-unescape-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/char-escape-unescape-transform.js
 var require_char_escape_unescape_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-escape-unescape-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/char-escape-unescape-transform.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       _hasXFlag: false,
@@ -36958,9 +36958,9 @@ var require_char_escape_unescape_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-class-classranges-merge-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/char-class-classranges-merge-transform.js
 var require_char_class_classranges_merge_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/char-class-classranges-merge-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/char-class-classranges-merge-transform.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       _hasIUFlags: false,
@@ -37177,9 +37177,9 @@ var require_char_class_classranges_merge_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/disjunction-remove-duplicates-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/disjunction-remove-duplicates-transform.js
 var require_disjunction_remove_duplicates_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/disjunction-remove-duplicates-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/disjunction-remove-duplicates-transform.js"(exports2, module2) {
     "use strict";
     var NodePath = require_node_path();
     var _require = require_utils2();
@@ -37203,9 +37203,9 @@ var require_disjunction_remove_duplicates_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/group-single-chars-to-char-class.js
+// node_modules/regexp-tree/dist/optimizer/transforms/group-single-chars-to-char-class.js
 var require_group_single_chars_to_char_class = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/group-single-chars-to-char-class.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/group-single-chars-to-char-class.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       Disjunction: function Disjunction(path22) {
@@ -37265,9 +37265,9 @@ var require_group_single_chars_to_char_class = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/remove-empty-group-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/remove-empty-group-transform.js
 var require_remove_empty_group_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/remove-empty-group-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/remove-empty-group-transform.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       Group: function Group(path22) {
@@ -37286,9 +37286,9 @@ var require_remove_empty_group_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/ungroup-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/ungroup-transform.js
 var require_ungroup_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/ungroup-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/ungroup-transform.js"(exports2, module2) {
     "use strict";
     function _toConsumableArray(arr) {
       if (Array.isArray(arr)) {
@@ -37349,9 +37349,9 @@ var require_ungroup_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/combine-repeating-patterns-transform.js
+// node_modules/regexp-tree/dist/optimizer/transforms/combine-repeating-patterns-transform.js
 var require_combine_repeating_patterns_transform = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/combine-repeating-patterns-transform.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/combine-repeating-patterns-transform.js"(exports2, module2) {
     "use strict";
     function _toConsumableArray(arr) {
       if (Array.isArray(arr)) {
@@ -37501,9 +37501,9 @@ var require_combine_repeating_patterns_transform = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/index.js
+// node_modules/regexp-tree/dist/optimizer/transforms/index.js
 var require_transforms2 = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/transforms/index.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/transforms/index.js"(exports2, module2) {
     "use strict";
     module2.exports = /* @__PURE__ */ new Map([
       // \ud83d\ude80 -> \u{1f680}
@@ -37542,9 +37542,9 @@ var require_transforms2 = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/index.js
+// node_modules/regexp-tree/dist/optimizer/index.js
 var require_optimizer = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/optimizer/index.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/optimizer/index.js"(exports2, module2) {
     "use strict";
     var clone2 = require_clone();
     var parser = require_parser();
@@ -37606,9 +37606,9 @@ var require_optimizer = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/special-symbols.js
+// node_modules/regexp-tree/dist/interpreter/finite-automaton/special-symbols.js
 var require_special_symbols = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/special-symbols.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/interpreter/finite-automaton/special-symbols.js"(exports2, module2) {
     "use strict";
     var EPSILON = "\u03B5";
     var EPSILON_CLOSURE = EPSILON + "*";
@@ -37619,9 +37619,9 @@ var require_special_symbols = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa.js
+// node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa.js
 var require_nfa = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa.js"(exports2, module2) {
     "use strict";
     var _slicedToArray = /* @__PURE__ */ (function() {
       function sliceIterator(arr, i) {
@@ -37856,9 +37856,9 @@ var require_nfa = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/dfa/dfa-minimizer.js
+// node_modules/regexp-tree/dist/interpreter/finite-automaton/dfa/dfa-minimizer.js
 var require_dfa_minimizer = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/dfa/dfa-minimizer.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/interpreter/finite-automaton/dfa/dfa-minimizer.js"(exports2, module2) {
     "use strict";
     var _slicedToArray = /* @__PURE__ */ (function() {
       function sliceIterator(arr, i) {
@@ -38196,9 +38196,9 @@ var require_dfa_minimizer = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/dfa/dfa.js
+// node_modules/regexp-tree/dist/interpreter/finite-automaton/dfa/dfa.js
 var require_dfa = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/dfa/dfa.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/interpreter/finite-automaton/dfa/dfa.js"(exports2, module2) {
     "use strict";
     var _createClass = /* @__PURE__ */ (function() {
       function defineProperties(target, props) {
@@ -38513,9 +38513,9 @@ var require_dfa = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/state.js
+// node_modules/regexp-tree/dist/interpreter/finite-automaton/state.js
 var require_state = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/state.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/interpreter/finite-automaton/state.js"(exports2, module2) {
     "use strict";
     var _createClass = /* @__PURE__ */ (function() {
       function defineProperties(target, props) {
@@ -38579,9 +38579,9 @@ var require_state = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa-state.js
+// node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa-state.js
 var require_nfa_state = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa-state.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa-state.js"(exports2, module2) {
     "use strict";
     var _createClass = /* @__PURE__ */ (function() {
       function defineProperties(target, props) {
@@ -38778,9 +38778,9 @@ var require_nfa_state = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/builders.js
+// node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/builders.js
 var require_builders = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/builders.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/builders.js"(exports2, module2) {
     "use strict";
     var NFA = require_nfa();
     var NFAState = require_nfa_state();
@@ -38908,9 +38908,9 @@ var require_builders = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa-from-regexp.js
+// node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa-from-regexp.js
 var require_nfa_from_regexp = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa-from-regexp.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/interpreter/finite-automaton/nfa/nfa-from-regexp.js"(exports2, module2) {
     "use strict";
     function _toConsumableArray(arr) {
       if (Array.isArray(arr)) {
@@ -38992,9 +38992,9 @@ var require_nfa_from_regexp = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/index.js
+// node_modules/regexp-tree/dist/interpreter/finite-automaton/index.js
 var require_finite_automaton = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/interpreter/finite-automaton/index.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/interpreter/finite-automaton/index.js"(exports2, module2) {
     "use strict";
     var NFA = require_nfa();
     var DFA = require_dfa();
@@ -39042,9 +39042,9 @@ var require_finite_automaton = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/runtime/index.js
+// node_modules/regexp-tree/dist/compat-transpiler/runtime/index.js
 var require_runtime = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/compat-transpiler/runtime/index.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/compat-transpiler/runtime/index.js"(exports2, module2) {
     "use strict";
     var _createClass = /* @__PURE__ */ (function() {
       function defineProperties(target, props) {
@@ -39132,9 +39132,9 @@ var require_runtime = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/regexp-tree.js
+// node_modules/regexp-tree/dist/regexp-tree.js
 var require_regexp_tree2 = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/dist/regexp-tree.js"(exports2, module2) {
+  "node_modules/regexp-tree/dist/regexp-tree.js"(exports2, module2) {
     "use strict";
     var compatTranspiler = require_compat_transpiler();
     var generator = require_generator();
@@ -39284,17 +39284,17 @@ var require_regexp_tree2 = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/index.js
+// node_modules/regexp-tree/index.js
 var require_regexp_tree3 = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/regexp-tree/index.js"(exports2, module2) {
+  "node_modules/regexp-tree/index.js"(exports2, module2) {
     "use strict";
     module2.exports = require_regexp_tree2();
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/safe-regex/lib/heuristic-analyzer.js
+// node_modules/safe-regex/lib/heuristic-analyzer.js
 var require_heuristic_analyzer = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/safe-regex/lib/heuristic-analyzer.js"(exports2, module2) {
+  "node_modules/safe-regex/lib/heuristic-analyzer.js"(exports2, module2) {
     var regexpTree2 = require_regexp_tree3();
     var analyzer = require_analyzer();
     var HeuristicAnalyzer = class extends analyzer.Analyzer {
@@ -39351,17 +39351,17 @@ var require_heuristic_analyzer = __commonJS({
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/safe-regex/lib/analyzer-family.js
+// node_modules/safe-regex/lib/analyzer-family.js
 var require_analyzer_family = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/safe-regex/lib/analyzer-family.js"(exports2, module2) {
+  "node_modules/safe-regex/lib/analyzer-family.js"(exports2, module2) {
     var heuristicAnalyzer = require_heuristic_analyzer();
     module2.exports = [heuristicAnalyzer];
   }
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/safe-regex/index.js
+// node_modules/safe-regex/index.js
 var require_safe_regex = __commonJS({
-  "../../home/bellman/Workspace/oh-my-claudecode/node_modules/safe-regex/index.js"(exports2, module2) {
+  "node_modules/safe-regex/index.js"(exports2, module2) {
     var analyzer = require_analyzer();
     var analyzerFamily = require_analyzer_family();
     var DEFAULT_SAFE_REP_LIMIT = 25;
@@ -43413,7 +43413,7 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/commander/esm.mjs
+// node_modules/commander/esm.mjs
 var import_index = __toESM(require_commander(), 1);
 var {
   program,
@@ -43430,7 +43430,7 @@ var {
   Help
 } = import_index.default;
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/chalk/source/vendor/ansi-styles/index.js
+// node_modules/chalk/source/vendor/ansi-styles/index.js
 var ANSI_BACKGROUND_OFFSET = 10;
 var wrapAnsi16 = (offset = 0) => (code) => `\x1B[${code + offset}m`;
 var wrapAnsi256 = (offset = 0) => (code) => `\x1B[${38 + offset};5;${code}m`;
@@ -43616,7 +43616,7 @@ function assembleStyles() {
 var ansiStyles = assembleStyles();
 var ansi_styles_default = ansiStyles;
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/chalk/source/vendor/supports-color/index.js
+// node_modules/chalk/source/vendor/supports-color/index.js
 var import_node_process = __toESM(require("node:process"), 1);
 var import_node_os = __toESM(require("node:os"), 1);
 var import_node_tty = __toESM(require("node:tty"), 1);
@@ -43748,7 +43748,7 @@ var supportsColor = {
 };
 var supports_color_default = supportsColor;
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/chalk/source/utilities.js
+// node_modules/chalk/source/utilities.js
 function stringReplaceAll(string3, substring, replacer) {
   let index = string3.indexOf(substring);
   if (index === -1) {
@@ -43778,7 +43778,7 @@ function stringEncaseCRLFWithFirstIndex(string3, prefix, postfix, index) {
   return returnValue;
 }
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/chalk/source/index.js
+// node_modules/chalk/source/index.js
 var { stdout: stdoutColor, stderr: stderrColor } = supports_color_default;
 var GENERATOR = /* @__PURE__ */ Symbol("GENERATOR");
 var STYLER = /* @__PURE__ */ Symbol("STYLER");
@@ -43992,7 +43992,7 @@ function toSdkMcpFormat(servers) {
   return result;
 }
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
+// node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
 var import_path5 = require("path");
 var import_url2 = require("url");
 var import_events = require("events");
@@ -63611,7 +63611,7 @@ function createSdkMcpServer(options) {
   };
 }
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/zod/v3/external.js
+// node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
   BRAND: () => BRAND,
@@ -63723,7 +63723,7 @@ __export(external_exports, {
   void: () => voidType2
 });
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/zod/v3/helpers/util.js
+// node_modules/zod/v3/helpers/util.js
 var util2;
 (function(util3) {
   util3.assertEqual = (_) => {
@@ -63857,7 +63857,7 @@ var getParsedType3 = (data) => {
   }
 };
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/zod/v3/ZodError.js
+// node_modules/zod/v3/ZodError.js
 var ZodIssueCode2 = util2.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -63975,7 +63975,7 @@ ZodError3.create = (issues) => {
   return error2;
 };
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/zod/v3/locales/en.js
+// node_modules/zod/v3/locales/en.js
 var errorMap2 = (issue2, _ctx) => {
   let message;
   switch (issue2.code) {
@@ -64078,7 +64078,7 @@ var errorMap2 = (issue2, _ctx) => {
 };
 var en_default3 = errorMap2;
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/zod/v3/errors.js
+// node_modules/zod/v3/errors.js
 var overrideErrorMap2 = en_default3;
 function setErrorMap(map) {
   overrideErrorMap2 = map;
@@ -64087,7 +64087,7 @@ function getErrorMap2() {
   return overrideErrorMap2;
 }
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/zod/v3/helpers/parseUtil.js
+// node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue2 = (params) => {
   const { data, path: path22, errorMaps, issueData } = params;
   const fullPath = [...path22, ...issueData.path || []];
@@ -64197,14 +64197,14 @@ var isDirty2 = (x) => x.status === "dirty";
 var isValid2 = (x) => x.status === "valid";
 var isAsync2 = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/zod/v3/helpers/errorUtil.js
+// node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil2;
 (function(errorUtil3) {
   errorUtil3.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil3.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil2 || (errorUtil2 = {}));
 
-// ../../home/bellman/Workspace/oh-my-claudecode/node_modules/zod/v3/types.js
+// node_modules/zod/v3/types.js
 var ParseInputLazyPath2 = class {
   constructor(parent, value, path22, key) {
     this._cachedPath = [];
