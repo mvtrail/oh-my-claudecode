@@ -9196,13 +9196,20 @@ function ensureStandaloneHookScripts(log3) {
       (0, import_fs36.chmodSync)(targetPath, 493);
     }
   }
-  for (const filename of (0, import_fs36.readdirSync)(templatesLibDir)) {
-    if (filename === "config-dir.mjs") continue;
-    const sourcePath = (0, import_path48.join)(templatesLibDir, filename);
-    const targetPath = (0, import_path48.join)(hooksLibDir, filename);
-    (0, import_fs36.copyFileSync)(sourcePath, targetPath);
-    if (!isWindows()) {
-      (0, import_fs36.chmodSync)(targetPath, 493);
+  if ((0, import_fs36.existsSync)(templatesLibDir)) {
+    if (!(0, import_fs36.existsSync)(hooksLibDir)) {
+      (0, import_fs36.mkdirSync)(hooksLibDir, { recursive: true });
+    }
+    for (const filename of (0, import_fs36.readdirSync)(templatesLibDir)) {
+      if (!filename.endsWith(".mjs") || filename === "config-dir.mjs") {
+        continue;
+      }
+      const sourcePath = (0, import_path48.join)(templatesLibDir, filename);
+      const targetPath = (0, import_path48.join)(hooksLibDir, filename);
+      (0, import_fs36.copyFileSync)(sourcePath, targetPath);
+      if (!isWindows()) {
+        (0, import_fs36.chmodSync)(targetPath, 493);
+      }
     }
   }
   const configDirHelperMjs = (0, import_path48.join)(packageDir, "scripts", "lib", "config-dir.mjs");
