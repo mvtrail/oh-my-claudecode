@@ -8664,6 +8664,23 @@ function stripManagedCodexBlock(content) {
   );
   return content.replace(managedBlockPattern, "").trimEnd();
 }
+function parseCodexMcpServerNames(content) {
+  const names = /* @__PURE__ */ new Set();
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const sectionMatch = line.match(/^\[mcp_servers\.([^\]]+)\]$/);
+    if (sectionMatch) {
+      const name = sectionMatch[1].trim();
+      if (name) {
+        names.add(name);
+      }
+    }
+  }
+  return names;
+}
 function renderManagedCodexMcpBlock(registry2) {
   const names = Object.keys(registry2);
   if (names.length === 0) {
@@ -8674,7 +8691,11 @@ function renderManagedCodexMcpBlock(registry2) {
 }
 function syncCodexConfigToml(existingContent, registry2) {
   const base = stripManagedCodexBlock(existingContent);
-  const managedBlock = renderManagedCodexMcpBlock(registry2);
+  const existingServerNames = parseCodexMcpServerNames(base);
+  const managedRegistry = Object.fromEntries(
+    Object.entries(registry2).filter(([name]) => !existingServerNames.has(name))
+  );
+  const managedBlock = renderManagedCodexMcpBlock(managedRegistry);
   const nextContent = managedBlock ? `${base ? `${base}
 
 ` : ""}${managedBlock}
@@ -22681,7 +22702,10 @@ function isTmuxAvailable() {
 }
 function isClaudeAvailable() {
   try {
-    (0, import_child_process19.execFileSync)("claude", ["--version"], { stdio: "ignore" });
+    (0, import_child_process19.execFileSync)("claude", ["--version"], {
+      stdio: "ignore",
+      shell: process.platform === "win32"
+    });
     return true;
   } catch {
     return false;
@@ -43086,6 +43110,18 @@ function extractSessionIdFromPath(transcriptPath) {
   const match = transcriptPath.match(/([0-9a-f-]{36})(?:\.jsonl)?$/i);
   return match ? match[1] : null;
 }
+function mergeStdinRateLimits(stdinRateLimits, usageResult) {
+  if (!stdinRateLimits) {
+    return usageResult;
+  }
+  return {
+    ...usageResult ?? {},
+    rateLimits: {
+      ...usageResult?.rateLimits ?? {},
+      ...stdinRateLimits
+    }
+  };
+}
 function readSessionSummary(stateDir, sessionId) {
   const statePath = (0, import_path125.join)(stateDir, `session-summary-${sessionId}.json`);
   if (!(0, import_fs106.existsSync)(statePath)) return null;
@@ -43257,7 +43293,8 @@ async function main2(watchMode = false, skipInit = false) {
       writeHudState(stateToWrite, cwd2, currentSessionId ?? void 0);
     }
     const stdinRateLimits = getRateLimitsFromStdin(stdin);
-    const rateLimitsResult = config2.elements.rateLimits === false ? null : stdinRateLimits ? { rateLimits: stdinRateLimits } : await getUsage();
+    const usageResult = config2.elements.rateLimits === false ? null : await getUsage();
+    const rateLimitsResult = config2.elements.rateLimits === false ? null : mergeStdinRateLimits(stdinRateLimits, usageResult);
     const customBuckets = config2.rateLimitsProvider?.type === "custom" ? await executeCustomProvider(config2.rateLimitsProvider) : null;
     let omcVersion = null;
     let updateAvailable = null;
@@ -71430,6 +71467,36 @@ function clearSessionOwnedStateCandidates(mode, root2, sessionId) {
   }
   return { cleared, hadFailure, paths };
 }
+function writeSessionCancelSignal(root2, sessionId, mode) {
+  const now = Date.now();
+  const cancelSignalPath = resolveSessionStatePath("cancel-signal", sessionId, root2);
+  atomicWriteJsonSync(cancelSignalPath, {
+    active: true,
+    requested_at: new Date(now).toISOString(),
+    expires_at: new Date(now + CANCEL_SIGNAL_TTL_MS).toISOString(),
+    mode,
+    source: "state_clear"
+  });
+}
+function isSessionModeActive(mode, root2, sessionId) {
+  if (MODE_CONFIGS[mode]) {
+    return isModeActive(mode, root2, sessionId);
+  }
+  const statePath = resolveSessionStatePath(mode, sessionId, root2);
+  if (!(0, import_fs20.existsSync)(statePath)) {
+    return false;
+  }
+  try {
+    const state = JSON.parse((0, import_fs20.readFileSync)(statePath, "utf-8"));
+    return state.active === true;
+  } catch {
+    return false;
+  }
+}
+function findSingleOwningSessionForMode(mode, root2, requesterSessionId) {
+  const owningSessions = listSessionIds(root2).filter((sid) => sid !== requesterSessionId && isSessionModeActive(mode, root2, sid));
+  return owningSessions.length === 1 ? owningSessions[0] : void 0;
+}
 var stateReadTool = {
   name: "state_read",
   description: "Read the current state for a specific mode (ralph, ultrawork, autopilot, etc.). Returns the JSON state data or indicates if no state exists.",
@@ -71694,28 +71761,41 @@ var stateClearTool = {
       };
       if (sessionId) {
         validateSessionId(sessionId);
+        const requestedSessionOwnedPaths = findSessionOwnedStateFiles(mode, sessionId, root2);
         for (const teamStatePath of findSessionOwnedStateFiles("team", sessionId, root2)) {
           collectTeamNamesForCleanup(teamStatePath);
         }
-        const now = Date.now();
-        const cancelSignalPath = resolveSessionStatePath("cancel-signal", sessionId, root2);
-        atomicWriteJsonSync(cancelSignalPath, {
-          active: true,
-          requested_at: new Date(now).toISOString(),
-          expires_at: new Date(now + CANCEL_SIGNAL_TTL_MS).toISOString(),
-          mode,
-          source: "state_clear"
-        });
+        writeSessionCancelSignal(root2, sessionId, mode);
         if (MODE_CONFIGS[mode]) {
           const success = clearModeState(mode, root2, sessionId);
           const sessionCleanup2 = clearSessionOwnedStateCandidates(mode, root2, sessionId);
           const legacyCleanup2 = clearLegacyStateCandidates(mode, root2, sessionId);
+          let ownerSessionId2;
+          let ownerSessionCleanup2 = { cleared: 0, hadFailure: false, paths: [] };
+          let ownerLegacyCleanup2 = { cleared: 0, hadFailure: false };
+          if (requestedSessionOwnedPaths.length === 0 && sessionCleanup2.cleared === 0 && legacyCleanup2.cleared === 0) {
+            ownerSessionId2 = findSingleOwningSessionForMode(mode, root2, sessionId);
+            if (ownerSessionId2) {
+              if (mode === "team") {
+                for (const teamStatePath of findSessionOwnedStateFiles("team", ownerSessionId2, root2)) {
+                  collectTeamNamesForCleanup(teamStatePath);
+                }
+              }
+              writeSessionCancelSignal(root2, ownerSessionId2, mode);
+              clearModeState(mode, root2, ownerSessionId2);
+              ownerSessionCleanup2 = clearSessionOwnedStateCandidates(mode, root2, ownerSessionId2);
+              ownerLegacyCleanup2 = clearLegacyStateCandidates(mode, root2, ownerSessionId2);
+            }
+          }
           const ghostNoteParts2 = [];
           if (legacyCleanup2.cleared > 0) {
             ghostNoteParts2.push("ghost legacy file also removed");
           }
           if (sessionCleanup2.cleared > 0) {
             ghostNoteParts2.push(`removed ${sessionCleanup2.cleared} recovered session file${sessionCleanup2.cleared === 1 ? "" : "s"}`);
+          }
+          if (ownerSessionId2) {
+            ghostNoteParts2.push(`cleared owning session: ${ownerSessionId2}`);
           }
           const ghostNote2 = ghostNoteParts2.length > 0 ? ` (${ghostNoteParts2.join(", ")})` : "";
           const runtimeCleanupNote2 = (() => {
@@ -71728,7 +71808,7 @@ var stateClearTool = {
             if (prunedMissions > 0) details.push(`pruned ${prunedMissions} HUD mission entry(ies)`);
             return details.length > 0 ? ` (${details.join(", ")})` : "";
           })();
-          if (success && !legacyCleanup2.hadFailure && !sessionCleanup2.hadFailure) {
+          if (success && !legacyCleanup2.hadFailure && !sessionCleanup2.hadFailure && !ownerSessionCleanup2.hadFailure && !ownerLegacyCleanup2.hadFailure) {
             return {
               content: [{
                 type: "text",
@@ -71746,12 +71826,31 @@ var stateClearTool = {
         }
         const sessionCleanup = clearSessionOwnedStateCandidates(mode, root2, sessionId);
         const legacyCleanup = clearLegacyStateCandidates(mode, root2, sessionId);
+        let ownerSessionId;
+        let ownerSessionCleanup = { cleared: 0, hadFailure: false, paths: [] };
+        let ownerLegacyCleanup = { cleared: 0, hadFailure: false };
+        if (requestedSessionOwnedPaths.length === 0 && sessionCleanup.cleared === 0 && legacyCleanup.cleared === 0) {
+          ownerSessionId = findSingleOwningSessionForMode(mode, root2, sessionId);
+          if (ownerSessionId) {
+            if (mode === "team") {
+              for (const teamStatePath of findSessionOwnedStateFiles("team", ownerSessionId, root2)) {
+                collectTeamNamesForCleanup(teamStatePath);
+              }
+            }
+            writeSessionCancelSignal(root2, ownerSessionId, mode);
+            ownerSessionCleanup = clearSessionOwnedStateCandidates(mode, root2, ownerSessionId);
+            ownerLegacyCleanup = clearLegacyStateCandidates(mode, root2, ownerSessionId);
+          }
+        }
         const ghostNoteParts = [];
         if (legacyCleanup.cleared > 0) {
           ghostNoteParts.push("ghost legacy file also removed");
         }
         if (sessionCleanup.cleared > 0) {
           ghostNoteParts.push(`removed ${sessionCleanup.cleared} recovered session file${sessionCleanup.cleared === 1 ? "" : "s"}`);
+        }
+        if (ownerSessionId) {
+          ghostNoteParts.push(`cleared owning session: ${ownerSessionId}`);
         }
         const ghostNote = ghostNoteParts.length > 0 ? ` (${ghostNoteParts.join(", ")})` : "";
         const runtimeCleanupNote = (() => {
@@ -71767,7 +71866,7 @@ var stateClearTool = {
         return {
           content: [{
             type: "text",
-            text: `${legacyCleanup.hadFailure || sessionCleanup.hadFailure ? "Warning: Some files could not be removed" : "Successfully cleared state"} for mode: ${mode} in session: ${sessionId}${ghostNote}${runtimeCleanupNote}`
+            text: `${legacyCleanup.hadFailure || sessionCleanup.hadFailure || ownerSessionCleanup.hadFailure || ownerLegacyCleanup.hadFailure ? "Warning: Some files could not be removed" : "Successfully cleared state"} for mode: ${mode} in session: ${sessionId}${ghostNote}${runtimeCleanupNote}`
           }]
         };
       }
@@ -82201,6 +82300,11 @@ function createInitialState() {
     errorCount: 0
   };
 }
+function shouldResumeBlockedPanesOnStatusChange(previousStatus, nextStatus) {
+  const wasLimited = shouldMonitorBlockedPanes(previousStatus);
+  const isNowLimited = shouldMonitorBlockedPanes(nextStatus);
+  return wasLimited && !isNowLimited && !isRateLimitStatusDegraded(nextStatus);
+}
 function registerDaemonCleanup(config2) {
   const cleanup = () => {
     try {
@@ -82242,8 +82346,11 @@ async function pollLoop2(config2) {
           (_, reject) => setTimeout(() => reject(new Error("checkRateLimitStatus timed out after 30s")), 3e4)
         )
       ]);
-      const wasLimited = shouldMonitorBlockedPanes(state.rateLimitStatus);
       const isNowLimited = shouldMonitorBlockedPanes(rateLimitStatus);
+      const shouldResumeBlockedPanes = shouldResumeBlockedPanesOnStatusChange(
+        state.rateLimitStatus,
+        rateLimitStatus
+      );
       state.rateLimitStatus = rateLimitStatus;
       if (rateLimitStatus) {
         log2(`Rate limit status: ${formatRateLimitStatus(rateLimitStatus)}`, config2);
@@ -82264,7 +82371,7 @@ async function pollLoop2(config2) {
           (tracked) => blockedPanes.some((current) => current.id === tracked.id)
         );
       }
-      if (wasLimited && !isNowLimited && state.blockedPanes.length > 0) {
+      if (shouldResumeBlockedPanes && state.blockedPanes.length > 0) {
         log2("Rate limit cleared! Attempting to resume blocked panes", config2);
         for (const pane of state.blockedPanes) {
           if (state.resumedPaneIds.includes(pane.id)) {
@@ -86276,7 +86383,11 @@ function runClaudeInsideTmux(cwd2, args) {
   } catch {
   }
   try {
-    (0, import_child_process30.execFileSync)("claude", args, { cwd: cwd2, stdio: "inherit" });
+    (0, import_child_process30.execFileSync)("claude", args, {
+      cwd: cwd2,
+      stdio: "inherit",
+      shell: process.platform === "win32"
+    });
   } catch (error2) {
     const err = error2;
     if (err.code === "ENOENT") {
@@ -86338,7 +86449,11 @@ function runClaudeOutsideTmux(cwd2, args, _sessionId) {
 }
 function runClaudeDirect(cwd2, args) {
   try {
-    (0, import_child_process30.execFileSync)("claude", args, { cwd: cwd2, stdio: "inherit" });
+    (0, import_child_process30.execFileSync)("claude", args, {
+      cwd: cwd2,
+      stdio: "inherit",
+      shell: process.platform === "win32"
+    });
   } catch (error2) {
     const err = error2;
     if (err.code === "ENOENT") {

@@ -258,6 +258,16 @@ function createInitialState() {
     };
 }
 /**
+ * Only a confirmed transition out of quota exhaustion should trigger pane resume.
+ * Degraded/stale usage-api 429 responses are visible to users but must not act
+ * like a real all-clear signal for blocked panes.
+ */
+export function shouldResumeBlockedPanesOnStatusChange(previousStatus, nextStatus) {
+    const wasLimited = shouldMonitorBlockedPanes(previousStatus);
+    const isNowLimited = shouldMonitorBlockedPanes(nextStatus);
+    return wasLimited && !isNowLimited && !isRateLimitStatusDegraded(nextStatus);
+}
+/**
  * Register cleanup handlers for the daemon process.
  * Ensures PID file and state are cleaned up on exit signals.
  */
@@ -303,8 +313,8 @@ async function pollLoop(config) {
                 checkRateLimitStatus(),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('checkRateLimitStatus timed out after 30s')), 30_000)),
             ]);
-            const wasLimited = shouldMonitorBlockedPanes(state.rateLimitStatus);
             const isNowLimited = shouldMonitorBlockedPanes(rateLimitStatus);
+            const shouldResumeBlockedPanes = shouldResumeBlockedPanesOnStatusChange(state.rateLimitStatus, rateLimitStatus);
             state.rateLimitStatus = rateLimitStatus;
             if (rateLimitStatus) {
                 log(`Rate limit status: ${formatRateLimitStatus(rateLimitStatus)}`, config);
@@ -328,7 +338,7 @@ async function pollLoop(config) {
                 state.blockedPanes = state.blockedPanes.filter((tracked) => blockedPanes.some((current) => current.id === tracked.id));
             }
             // If rate limit just cleared (was limited, now not), attempt resume
-            if (wasLimited && !isNowLimited && state.blockedPanes.length > 0) {
+            if (shouldResumeBlockedPanes && state.blockedPanes.length > 0) {
                 log('Rate limit cleared! Attempting to resume blocked panes', config);
                 for (const pane of state.blockedPanes) {
                     if (state.resumedPaneIds.includes(pane.id)) {

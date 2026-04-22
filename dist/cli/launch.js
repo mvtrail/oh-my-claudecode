@@ -369,7 +369,11 @@ function runClaudeInsideTmux(cwd, args) {
     catch { /* non-fatal — user's tmux may not support these options */ }
     // Launch Claude in current pane
     try {
-        execFileSync('claude', args, { cwd, stdio: 'inherit' });
+        execFileSync('claude', args, {
+            cwd,
+            stdio: 'inherit',
+            shell: process.platform === 'win32',
+        });
     }
     catch (error) {
         const err = error;
@@ -469,7 +473,11 @@ function runClaudeOutsideTmux(cwd, args, _sessionId) {
  */
 function runClaudeDirect(cwd, args) {
     try {
-        execFileSync('claude', args, { cwd, stdio: 'inherit' });
+        execFileSync('claude', args, {
+            cwd,
+            stdio: 'inherit',
+            shell: process.platform === 'win32',
+        });
     }
     catch (error) {
         const err = error;

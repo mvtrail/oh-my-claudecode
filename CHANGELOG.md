@@ -1,3 +1,31 @@
+# oh-my-claudecode v4.13.2: Bug Fixes
+
+## Release Notes
+
+Release with **5 bug fixes** across **5 merged PRs**.
+
+### Highlights
+
+- **fix(team): Clear the owning Ralph session when cross-session cancel has no local state** (#2744) - Prevents ghost Ralph sessions from blocking new operations
+- **fix(rate-limit-wait): Prevent stale Usage API 429s from resuming blocked panes** (#2746) - Stops transient 429s from incorrectly unblocking wait panes
+- **fix(installer): Keep Codex MCP sync from duplicating user-owned tables** (#2748) - Preserves user-managed MCP server configs during Codex registry sync
+- **fix(hud): Preserve weekly HUD quotas when stdin rate limits are present** (#2751) - Merges stdin rate limits with usage API data instead of replacing entirely
+- **fix(cli): Ensure Windows can launch npm-installed Claude CLI** (#2753) - Fixes Windows path resolution for npm-installed `claude` binary
+
+### Bug Fixes
+
+- **fix(team): Clear the owning Ralph session when cross-session cancel has no local state** (#2744)
+- **fix(rate-limit-wait): Prevent stale Usage API 429s from resuming blocked panes** (#2746)
+- **fix(installer): Keep Codex MCP sync from duplicating user-owned tables** (#2748)
+- **fix(hud): Preserve weekly HUD quotas when stdin rate limits are present** (#2751)
+- **fix(cli): Ensure Windows can launch npm-installed Claude CLI** (#2753)
+
+### Stats
+
+- **5 PRs merged** | **0 new features** | **5 bug fixes** | **0 security/hardening improvements** | **0 other changes**
+
+---
+
 # oh-my-claudecode v4.13.1: Cursor Support & Bug Fixes
 
 ## Release Notes
