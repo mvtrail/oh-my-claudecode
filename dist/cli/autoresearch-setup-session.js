@@ -117,6 +117,7 @@ export function runAutoresearchSetupSession(input) {
     const result = spawnSync('claude', ['-p', prompt], {
         cwd: input.repoRoot,
         encoding: 'utf-8',
+        shell: process.platform === 'win32',
         env: {
             ...process.env,
             CLAUDE_CODE_ENTRYPOINT: AUTORESEARCH_SETUP_ENTRYPOINT,

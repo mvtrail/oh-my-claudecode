@@ -183,13 +183,58 @@ describe('HUD watch mode initialization', () => {
         expect(readUltraworkStateForHud).toHaveBeenCalledWith('/tmp/worktree', '123e4567-e89b-12d3-a456-426614174000');
         expect(readAutopilotStateForHud).toHaveBeenCalledWith('/tmp/worktree', '123e4567-e89b-12d3-a456-426614174000');
     });
-    it('prefers stdin rate limits over the usage API when available', async () => {
+    it('merges stdin generic rate limits over usage API data when available', async () => {
         const hud = await importHudModule({
             config: makeConfig(true),
             stdin: makeStdin(true),
+            getUsageResult: {
+                rateLimits: {
+                    fiveHourPercent: 55,
+                    weeklyPercent: 10,
+                    fiveHourResetsAt: new Date(1777000000 * 1000),
+                    weeklyResetsAt: new Date(1777100000 * 1000),
+                    sonnetWeeklyPercent: 44,
+                    sonnetWeeklyResetsAt: new Date(1777200000 * 1000),
+                    opusWeeklyPercent: 7,
+                    opusWeeklyResetsAt: new Date(1777300000 * 1000),
+                    extraUsagePercent: 3,
+                    extraUsageSpentUsd: 1.25,
+                    extraUsageLimitUsd: 10,
+                },
+                error: 'network',
+                stale: true,
+            },
         });
         await hud.main(true, false);
-        expect(getUsage).not.toHaveBeenCalled();
+        expect(getUsage).toHaveBeenCalledTimes(1);
+        expect(render).toHaveBeenCalledWith(expect.objectContaining({
+            rateLimitsResult: {
+                rateLimits: {
+                    fiveHourPercent: 11,
+                    weeklyPercent: 2,
+                    fiveHourResetsAt: new Date(1776348000 * 1000),
+                    weeklyResetsAt: new Date(1776916800 * 1000),
+                    sonnetWeeklyPercent: 44,
+                    sonnetWeeklyResetsAt: new Date(1777200000 * 1000),
+                    opusWeeklyPercent: 7,
+                    opusWeeklyResetsAt: new Date(1777300000 * 1000),
+                    extraUsagePercent: 3,
+                    extraUsageSpentUsd: 1.25,
+                    extraUsageLimitUsd: 10,
+                },
+                error: 'network',
+                stale: true,
+            },
+        }), expect.anything());
+    });
+    it('falls back to stdin rate limits when usage API returns no rate limits', async () => {
+        const hud = await importHudModule({
+            config: makeConfig(true),
+            stdin: makeStdin(true),
+            getUsageResult: { rateLimits: null, error: 'no_credentials' },
+        });
+        await hud.main(true, false);
+        expect(getUsage).toHaveBeenCalledTimes(1);
         expect(render).toHaveBeenCalledWith(expect.objectContaining({
             rateLimitsResult: {
                 rateLimits: {
@@ -198,6 +243,7 @@ describe('HUD watch mode initialization', () => {
                     fiveHourResetsAt: new Date(1776348000 * 1000),
                     weeklyResetsAt: new Date(1776916800 * 1000),
                 },
+                error: 'no_credentials',
             },
         }), expect.anything());
     });

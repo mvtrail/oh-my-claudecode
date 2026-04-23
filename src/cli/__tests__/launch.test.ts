@@ -193,6 +193,22 @@ describe('runClaude — exit code propagation', () => {
 
       expect(processExitSpy).not.toHaveBeenCalled();
     });
+
+    it('uses shell:true on win32 so claude.cmd can launch', () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+      (execFileSync as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(''));
+
+      runClaude('/tmp', ['--resume'], 'sid');
+
+      expect(vi.mocked(execFileSync)).toHaveBeenCalledWith('claude', ['--resume'], {
+        cwd: '/tmp',
+        stdio: 'inherit',
+        shell: true,
+      });
+
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    });
   });
 
   describe('inside-tmux policy', () => {
@@ -221,6 +237,22 @@ describe('runClaude — exit code propagation', () => {
       runClaude('/tmp', [], 'sid');
 
       expect(processExitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('uses shell:true on win32 so claude.cmd can launch inside tmux', () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+      (execFileSync as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(''));
+
+      runClaude('/tmp', ['--continue'], 'sid');
+
+      expect(vi.mocked(execFileSync)).toHaveBeenCalledWith('claude', ['--continue'], {
+        cwd: '/tmp',
+        stdio: 'inherit',
+        shell: true,
+      });
+
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     });
 
     it('exits with code 1 on ENOENT', () => {

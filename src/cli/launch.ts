@@ -412,7 +412,11 @@ function runClaudeInsideTmux(cwd: string, args: string[]): void {
 
   // Launch Claude in current pane
   try {
-    execFileSync('claude', args, { cwd, stdio: 'inherit' });
+    execFileSync('claude', args, {
+      cwd,
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    });
   } catch (error) {
     const err = error as NodeJS.ErrnoException & { status?: number | null };
     if (err.code === 'ENOENT') {
@@ -516,7 +520,11 @@ function runClaudeOutsideTmux(cwd: string, args: string[], _sessionId: string): 
  */
 function runClaudeDirect(cwd: string, args: string[]): void {
   try {
-    execFileSync('claude', args, { cwd, stdio: 'inherit' });
+    execFileSync('claude', args, {
+      cwd,
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    });
   } catch (error) {
     const err = error as NodeJS.ErrnoException & { status?: number | null };
     if (err.code === 'ENOENT') {

@@ -37,8 +37,10 @@ import { refreshMissionBoardState } from "./mission-board.js";
 import { sanitizeOutput } from "./sanitize.js";
 import type {
   HudRenderContext,
+  RateLimits,
   SessionHealth,
   SessionSummaryState,
+  UsageResult,
 } from "./types.js";
 import { getRuntimePackageVersion } from "../lib/version.js";
 import { compareVersions } from "../features/auto-update.js";
@@ -62,6 +64,23 @@ function extractSessionIdFromPath(transcriptPath: string): string | null {
   if (!transcriptPath) return null;
   const match = transcriptPath.match(/([0-9a-f-]{36})(?:\.jsonl)?$/i);
   return match ? match[1] : null;
+}
+
+function mergeStdinRateLimits(
+  stdinRateLimits: RateLimits | null,
+  usageResult: UsageResult | null,
+): UsageResult | null {
+  if (!stdinRateLimits) {
+    return usageResult;
+  }
+
+  return {
+    ...(usageResult ?? {}),
+    rateLimits: {
+      ...(usageResult?.rateLimits ?? {}),
+      ...stdinRateLimits,
+    },
+  };
 }
 
 /**
@@ -340,14 +359,15 @@ async function main(watchMode = false, skipInit = false): Promise<void> {
       writeHudState(stateToWrite, cwd, currentSessionId ?? undefined);
     }
 
-    // Prefer Claude Code stdin rate limits when available to avoid cold-start API fetches.
+    // Merge Claude Code stdin generic buckets with API/cache-specific fields.
+    // Stdin owns fresher five-hour/seven-day values, while getUsage() may provide
+    // Sonnet/Opus weekly, monthly, extra, stale, and error metadata.
     const stdinRateLimits = getRateLimitsFromStdin(stdin);
+    const usageResult = config.elements.rateLimits === false ? null : await getUsage();
     const rateLimitsResult =
       config.elements.rateLimits === false
         ? null
-        : stdinRateLimits
-          ? { rateLimits: stdinRateLimits }
-          : await getUsage();
+        : mergeStdinRateLimits(stdinRateLimits, usageResult);
 
     // Fetch custom rate limit buckets (if configured)
     const customBuckets =

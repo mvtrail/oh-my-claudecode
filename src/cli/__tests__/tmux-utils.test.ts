@@ -24,6 +24,7 @@ import {
   buildTmuxShellCommand,
   buildTmuxShellCommandWithEnv,
   createHudWatchPane,
+  isClaudeAvailable,
   killTmuxPane,
   listHudWatchPaneIdsInCurrentWindow,
   resolveLaunchPolicy,
@@ -128,6 +129,22 @@ describe('resolveLaunchPolicy', () => {
       ['/d', '/s', '/c', '"C:\\Program Files\\psmux\\tmux.cmd" -V'],
       { timeout: 5000 }
     );
+
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+  });
+});
+
+describe('isClaudeAvailable', () => {
+  it('uses shell:true on win32 so npm .cmd wrappers resolve', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    mockedExecFileSync.mockReturnValue(Buffer.from('2.1.116'));
+
+    expect(isClaudeAvailable()).toBe(true);
+    expect(mockedExecFileSync).toHaveBeenCalledWith('claude', ['--version'], {
+      stdio: 'ignore',
+      shell: true,
+    });
 
     Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
   });

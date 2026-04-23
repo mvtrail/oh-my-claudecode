@@ -1,6 +1,10 @@
 {
   "name": "oh-my-claudecode",
+<<<<<<< HEAD
   "version": "4.13.0",
+=======
+  "version": "4.13.2",
+>>>>>>> main
   "description": "Multi-agent orchestration system for Claude Code",
   "author": {
     "name": "oh-my-claudecode contributors"

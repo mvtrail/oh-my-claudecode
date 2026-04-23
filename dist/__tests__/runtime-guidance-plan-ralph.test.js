@@ -3,6 +3,7 @@ const availability = vi.hoisted(() => ({
     claude: true,
     codex: false,
     gemini: false,
+    cursor: false,
 }));
 vi.mock('../team/model-contract.js', () => ({
     isCliAvailable: (agentType) => availability[agentType],
@@ -13,6 +14,7 @@ describe('runtime-guidance: ralplan/plan/ralph Codex availability', () => {
         availability.claude = true;
         availability.codex = false;
         availability.gemini = false;
+        availability.cursor = false;
     });
     describe('renderSkillRuntimeGuidance for plan-family skills', () => {
         const planSkills = ['ralplan', 'omc-plan', 'plan'];

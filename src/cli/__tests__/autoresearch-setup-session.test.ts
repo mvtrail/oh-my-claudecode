@@ -87,4 +87,27 @@ describe('runAutoresearchSetupSession', () => {
 
     expect(() => runAutoresearchSetupSession({ repoRoot: '/repo', missionText: 'Improve launch flow' })).toThrow(/claude_autoresearch_setup_failed:2/);
   });
+
+  it('uses shell:true on win32 so claude.cmd can run in print mode', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    vi.mocked(spawnSync).mockReturnValue({
+      status: 0,
+      stdout: '{"missionText":"Improve launch flow","evaluatorCommand":"npm run test:run -- launch","evaluatorSource":"inferred","confidence":0.86,"slug":"launch-flow","readyToLaunch":true}',
+      stderr: '',
+      pid: 1,
+      output: [],
+      signal: null,
+    } as ReturnType<typeof spawnSync>);
+
+    runAutoresearchSetupSession({ repoRoot: '/repo', missionText: 'Improve launch flow' });
+
+    expect(vi.mocked(spawnSync)).toHaveBeenCalledWith('claude', ['-p', expect.any(String)], expect.objectContaining({
+      cwd: '/repo',
+      encoding: 'utf-8',
+      shell: true,
+    }));
+
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+  });
 });
