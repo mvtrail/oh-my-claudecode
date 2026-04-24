@@ -4484,7 +4484,7 @@ var init_model_contract = __esm({
         binary: "gemini",
         installInstructions: "Install Gemini CLI: npm install -g @google/gemini-cli",
         supportsPromptMode: true,
-        promptModeFlag: "-i",
+        promptModeFlag: "-p",
         buildLaunchArgs(model, extraFlags = []) {
           const args = ["--approval-mode", "yolo"];
           if (model) args.push("--model", model);
@@ -5238,12 +5238,9 @@ function recordMetadata(repoRoot, teamName, info) {
     writeMetadata(repoRoot, teamName, [...existing, info]);
   });
 }
-function forgetMetadata(repoRoot, teamName, workerName) {
-  const metaLockPath = getMetadataPath(repoRoot, teamName) + ".lock";
-  withFileLockSync(metaLockPath, () => {
-    const existing = readMetadata(repoRoot, teamName).filter((entry) => entry.workerName !== workerName);
-    writeMetadata(repoRoot, teamName, existing);
-  });
+function forgetMetadataUnlocked(repoRoot, teamName, workerName) {
+  const existing = readMetadata(repoRoot, teamName).filter((entry) => entry.workerName !== workerName);
+  writeMetadata(repoRoot, teamName, existing);
 }
 function assertCompatibleExistingWorktree(repoRoot, wtPath, expectedBranch, mode) {
   const registeredBranch = getRegisteredWorktreeBranch(repoRoot, wtPath);
@@ -5364,23 +5361,33 @@ function prepareWorkerWorktreeForRemoval(teamName, workerName, repoRoot, worktre
 function removeWorkerWorktree(teamName, workerName, repoRoot) {
   const wtPath = getWorktreePath(repoRoot, teamName, workerName);
   const branch = getBranchName(teamName, workerName);
-  prepareWorkerWorktreeForRemoval(teamName, workerName, repoRoot, wtPath);
-  try {
-    execFileSync3("git", ["worktree", "remove", wtPath], { cwd: repoRoot, stdio: "pipe" });
-  } catch {
-  }
-  try {
-    execFileSync3("git", ["worktree", "prune"], { cwd: repoRoot, stdio: "pipe" });
-  } catch {
-  }
-  try {
-    execFileSync3("git", ["branch", "-D", branch], { cwd: repoRoot, stdio: "pipe" });
-  } catch {
-  }
-  if (existsSync10(wtPath) && !isRegisteredWorktreePath(repoRoot, wtPath)) {
-    rmSync2(wtPath, { recursive: true, force: true });
-  }
-  forgetMetadata(repoRoot, teamName, workerName);
+  const metaLockPath = `${getMetadataPath(repoRoot, teamName)}.lock`;
+  withFileLockSync(metaLockPath, () => {
+    prepareWorkerWorktreeForRemoval(teamName, workerName, repoRoot, wtPath);
+    const wasRegisteredWorktree = isRegisteredWorktreePath(repoRoot, wtPath);
+    try {
+      execFileSync3("git", ["worktree", "remove", wtPath], { cwd: repoRoot, stdio: "pipe" });
+    } catch (err) {
+      if (wasRegisteredWorktree) {
+        const detail = err instanceof Error && err.message ? `: ${err.message}` : "";
+        const error = new Error(`worktree_remove_failed: preserving metadata for registered worker worktree at ${wtPath}${detail}`);
+        error.code = "worktree_remove_failed";
+        throw error;
+      }
+    }
+    try {
+      execFileSync3("git", ["worktree", "prune"], { cwd: repoRoot, stdio: "pipe" });
+    } catch {
+    }
+    try {
+      execFileSync3("git", ["branch", "-D", branch], { cwd: repoRoot, stdio: "pipe" });
+    } catch {
+    }
+    if (existsSync10(wtPath) && !isRegisteredWorktreePath(repoRoot, wtPath)) {
+      rmSync2(wtPath, { recursive: true, force: true });
+    }
+    forgetMetadataUnlocked(repoRoot, teamName, workerName);
+  });
 }
 function inspectTeamWorktreeCleanupSafety(teamName, repoRoot) {
   const metadata = readMetadataResult(repoRoot, teamName);

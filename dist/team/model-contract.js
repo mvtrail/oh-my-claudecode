@@ -157,7 +157,7 @@ const CONTRACTS = {
         binary: 'gemini',
         installInstructions: 'Install Gemini CLI: npm install -g @google/gemini-cli',
         supportsPromptMode: true,
-        promptModeFlag: '-i',
+        promptModeFlag: '-p',
         buildLaunchArgs(model, extraFlags = []) {
             const args = ['--approval-mode', 'yolo'];
             if (model)
@@ -374,7 +374,7 @@ export function getPromptModeArgs(agentType, instruction) {
     if (!contract.supportsPromptMode) {
         return [];
     }
-    // If a flag is defined (e.g. gemini's '-i'), prepend it; otherwise the
+    // If a flag is defined (e.g. gemini's '-p'), prepend it; otherwise the
     // instruction is passed as a positional argument (e.g. codex [PROMPT]).
     if (contract.promptModeFlag) {
         return [contract.promptModeFlag, instruction];

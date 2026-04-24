@@ -135,7 +135,7 @@ describe('spawnWorkerForTask – prompt mode and interactive worker launch', () 
     setupTaskDir(cwd);
   });
 
-  it('gemini worker launch args include -i flag with inbox path', async () => {
+  it('gemini worker launch args include -p flag with inbox path', async () => {
     const runtime = makeRuntime(cwd, 'gemini');
 
     await spawnWorkerForTask(runtime, 'worker-1', 0);
@@ -147,8 +147,8 @@ describe('spawnWorkerForTask – prompt mode and interactive worker launch', () 
     expect(launchCall).toBeDefined();
     const launchCmd = launchCall![launchCall!.length - 1];
 
-    // Should contain -i flag for interactive mode
-    expect(launchCmd).toContain("'-i'");
+    // Should contain -p flag for prompt mode
+    expect(launchCmd).toContain("'-p'");
     // Should contain the inbox path reference
     expect(launchCmd).toContain('.omc/state/team/test-team/workers/worker-1/inbox.md');
     expect(launchCmd).toContain('execute now');

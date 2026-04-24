@@ -126,15 +126,15 @@ describe('spawnWorkerForTask – prompt mode and interactive worker launch', () 
         cwd = mkdtempSync(join(tmpdir(), 'runtime-gemini-prompt-'));
         setupTaskDir(cwd);
     });
-    it('gemini worker launch args include -i flag with inbox path', async () => {
+    it('gemini worker launch args include -p flag with inbox path', async () => {
         const runtime = makeRuntime(cwd, 'gemini');
         await spawnWorkerForTask(runtime, 'worker-1', 0);
         // Find the send-keys call that launches the worker (contains -l flag)
         const launchCall = tmuxCalls.args.find(args => args[0] === 'send-keys' && args.includes('-l'));
         expect(launchCall).toBeDefined();
         const launchCmd = launchCall[launchCall.length - 1];
-        // Should contain -i flag for interactive mode
-        expect(launchCmd).toContain("'-i'");
+        // Should contain -p flag for prompt mode
+        expect(launchCmd).toContain("'-p'");
         // Should contain the inbox path reference
         expect(launchCmd).toContain('.omc/state/team/test-team/workers/worker-1/inbox.md');
         expect(launchCmd).toContain('execute now');

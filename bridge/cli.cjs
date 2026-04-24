@@ -14050,6 +14050,7 @@ var init_types4 = __esm({
       line1: ["hostname", "cwd", "gitRepo", "gitBranch", "gitStatus", "model", "apiKeySource", "profile"],
       main: [
         "omcLabel",
+        "enterpriseCost",
         "rateLimits",
         "customBuckets",
         "permission",
@@ -23139,7 +23140,7 @@ function wrapWithLoginShell(command) {
     const comspec = process.env.COMSPEC || "cmd.exe";
     return `${quoteForCmd(comspec)} /d /s /c ${quoteForCmd(command)}`;
   }
-  const shell = process.env.SHELL || "/bin/bash";
+  const shell = process.env.SHELL || "/bin/sh";
   const shellName = (0, import_path70.basename)(shell).replace(/\.(exe|cmd|bat)$/i, "");
   const rcFile = process.env.HOME ? `${process.env.HOME}/.${shellName}rc` : "";
   const sourcePrefix = rcFile ? `[ -f ${quoteShellArg2(rcFile)} ] && . ${quoteShellArg2(rcFile)}; ` : "";
@@ -28601,7 +28602,7 @@ var init_model_contract = __esm({
         binary: "gemini",
         installInstructions: "Install Gemini CLI: npm install -g @google/gemini-cli",
         supportsPromptMode: true,
-        promptModeFlag: "-i",
+        promptModeFlag: "-p",
         buildLaunchArgs(model, extraFlags = []) {
           const args = ["--approval-mode", "yolo"];
           if (model) args.push("--model", model);
@@ -30407,12 +30408,9 @@ function recordMetadata(repoRoot, teamName, info) {
     writeMetadata(repoRoot, teamName, [...existing, info]);
   });
 }
-function forgetMetadata(repoRoot, teamName, workerName2) {
-  const metaLockPath = getMetadataPath(repoRoot, teamName) + ".lock";
-  withFileLockSync(metaLockPath, () => {
-    const existing = readMetadata(repoRoot, teamName).filter((entry) => entry.workerName !== workerName2);
-    writeMetadata(repoRoot, teamName, existing);
-  });
+function forgetMetadataUnlocked(repoRoot, teamName, workerName2) {
+  const existing = readMetadata(repoRoot, teamName).filter((entry) => entry.workerName !== workerName2);
+  writeMetadata(repoRoot, teamName, existing);
 }
 function assertCompatibleExistingWorktree(repoRoot, wtPath, expectedBranch, mode) {
   const registeredBranch = getRegisteredWorktreeBranch(repoRoot, wtPath);
@@ -30533,23 +30531,33 @@ function prepareWorkerWorktreeForRemoval(teamName, workerName2, repoRoot, worktr
 function removeWorkerWorktree(teamName, workerName2, repoRoot) {
   const wtPath = getWorktreePath(repoRoot, teamName, workerName2);
   const branch = getBranchName(teamName, workerName2);
-  prepareWorkerWorktreeForRemoval(teamName, workerName2, repoRoot, wtPath);
-  try {
-    (0, import_node_child_process6.execFileSync)("git", ["worktree", "remove", wtPath], { cwd: repoRoot, stdio: "pipe" });
-  } catch {
-  }
-  try {
-    (0, import_node_child_process6.execFileSync)("git", ["worktree", "prune"], { cwd: repoRoot, stdio: "pipe" });
-  } catch {
-  }
-  try {
-    (0, import_node_child_process6.execFileSync)("git", ["branch", "-D", branch], { cwd: repoRoot, stdio: "pipe" });
-  } catch {
-  }
-  if ((0, import_node_fs6.existsSync)(wtPath) && !isRegisteredWorktreePath(repoRoot, wtPath)) {
-    (0, import_node_fs6.rmSync)(wtPath, { recursive: true, force: true });
-  }
-  forgetMetadata(repoRoot, teamName, workerName2);
+  const metaLockPath = `${getMetadataPath(repoRoot, teamName)}.lock`;
+  withFileLockSync(metaLockPath, () => {
+    prepareWorkerWorktreeForRemoval(teamName, workerName2, repoRoot, wtPath);
+    const wasRegisteredWorktree = isRegisteredWorktreePath(repoRoot, wtPath);
+    try {
+      (0, import_node_child_process6.execFileSync)("git", ["worktree", "remove", wtPath], { cwd: repoRoot, stdio: "pipe" });
+    } catch (err) {
+      if (wasRegisteredWorktree) {
+        const detail = err instanceof Error && err.message ? `: ${err.message}` : "";
+        const error2 = new Error(`worktree_remove_failed: preserving metadata for registered worker worktree at ${wtPath}${detail}`);
+        error2.code = "worktree_remove_failed";
+        throw error2;
+      }
+    }
+    try {
+      (0, import_node_child_process6.execFileSync)("git", ["worktree", "prune"], { cwd: repoRoot, stdio: "pipe" });
+    } catch {
+    }
+    try {
+      (0, import_node_child_process6.execFileSync)("git", ["branch", "-D", branch], { cwd: repoRoot, stdio: "pipe" });
+    } catch {
+    }
+    if ((0, import_node_fs6.existsSync)(wtPath) && !isRegisteredWorktreePath(repoRoot, wtPath)) {
+      (0, import_node_fs6.rmSync)(wtPath, { recursive: true, force: true });
+    }
+    forgetMetadataUnlocked(repoRoot, teamName, workerName2);
+  });
 }
 function inspectTeamWorktreeCleanupSafety(teamName, repoRoot) {
   const metadata = readMetadataResult(repoRoot, teamName);
@@ -33388,7 +33396,7 @@ function recordSessionMetrics(directory, input) {
   }
   return metrics;
 }
-function cleanupTransientState(directory) {
+function cleanupTransientState(directory, endingSessionId) {
   let filesRemoved = 0;
   const omcDir = getOmcRoot(directory);
   if (!fs12.existsSync(omcDir)) {
@@ -33460,6 +33468,16 @@ function cleanupTransientState(directory) {
     }
     const sessionsDir = path16.join(stateDir, "sessions");
     if (fs12.existsSync(sessionsDir)) {
+      const crossSessionSafePatterns = [
+        /^cancel-signal/,
+        /stop-breaker/
+      ];
+      const endingSessionOnlyPatterns = [
+        // HUD's stdin cache is session-scoped (see `src/hud/stdin.ts`)
+        // and consumed by `omc hud --watch` for the owning session.
+        /^hud-stdin-cache\.json$/
+      ];
+      const isEndingSession = (sid) => typeof endingSessionId === "string" && endingSessionId.length > 0 && sid === endingSessionId;
       try {
         const sessionDirs = fs12.readdirSync(sessionsDir);
         for (const sid of sessionDirs) {
@@ -33467,9 +33485,10 @@ function cleanupTransientState(directory) {
           try {
             const stat2 = fs12.statSync(sessionDir);
             if (!stat2.isDirectory()) continue;
+            const activePatterns = isEndingSession(sid) ? [...crossSessionSafePatterns, ...endingSessionOnlyPatterns] : crossSessionSafePatterns;
             const sessionFiles = fs12.readdirSync(sessionDir);
             for (const file of sessionFiles) {
-              if (/^cancel-signal/.test(file) || /stop-breaker/.test(file)) {
+              if (activePatterns.some((p) => p.test(file))) {
                 try {
                   fs12.unlinkSync(path16.join(sessionDir, file));
                   filesRemoved++;
@@ -33717,7 +33736,7 @@ async function processSessionEnd(input) {
   const metrics = recordSessionMetrics(directory, input);
   exportSessionSummary(directory, metrics);
   await cleanupSessionOwnedTeams(directory, input.session_id);
-  cleanupTransientState(directory);
+  cleanupTransientState(directory, input.session_id);
   cleanupModeStates(directory, input.session_id);
   cleanupMissionState(directory, input.session_id);
   try {
@@ -40790,7 +40809,9 @@ function readKeychainCredential(serviceName, account) {
       accessToken: creds.accessToken,
       expiresAt: creds.expiresAt,
       refreshToken: creds.refreshToken,
-      source: "keychain"
+      source: "keychain",
+      subscriptionType: creds.subscriptionType,
+      rateLimitTier: creds.rateLimitTier
     };
   } catch {
     return null;
@@ -40831,7 +40852,9 @@ function readFileCredentials() {
         accessToken: creds.accessToken,
         expiresAt: creds.expiresAt,
         refreshToken: creds.refreshToken,
-        source: "file"
+        source: "file",
+        subscriptionType: creds.subscriptionType,
+        rateLimitTier: creds.rateLimitTier
       };
     }
   } catch {
@@ -40842,6 +40865,17 @@ function getCredentials() {
   const keychainCreds = readKeychainCredentials();
   if (keychainCreds) return keychainCreds;
   return readFileCredentials();
+}
+function getSubscriptionInfo() {
+  try {
+    const creds = getCredentials();
+    return {
+      subscriptionType: creds?.subscriptionType ?? null,
+      rateLimitTier: creds?.rateLimitTier ?? null
+    };
+  } catch {
+    return { subscriptionType: null, rateLimitTier: null };
+  }
 }
 function validateCredentials(creds) {
   if (!creds.accessToken) return false;
@@ -41060,7 +41094,10 @@ function clamp(v) {
 function parseUsageResponse(response) {
   const fiveHour = response.five_hour?.utilization;
   const sevenDay = response.seven_day?.utilization;
-  if (fiveHour == null && sevenDay == null) return null;
+  const enterpriseCredits = response.extra_usage?.used_credits;
+  const enterpriseCurrency = (response.extra_usage?.currency ?? "USD").toUpperCase();
+  const hasUsableEnterprise = enterpriseCredits != null && enterpriseCurrency === "USD";
+  if (fiveHour == null && sevenDay == null && !hasUsableEnterprise) return null;
   const parseDate = (dateStr) => {
     if (!dateStr) return null;
     try {
@@ -41089,12 +41126,22 @@ function parseUsageResponse(response) {
     result.opusWeeklyResetsAt = parseDate(opusResetsAt);
   }
   const extra = response.extra_usage;
-  if (extra != null && extra.limit_usd != null && extra.limit_usd > 0) {
-    const spentUsd = extra.spent_usd ?? 0;
-    result.extraUsageSpentUsd = spentUsd;
-    result.extraUsageLimitUsd = extra.limit_usd;
-    result.extraUsagePercent = extra.utilization != null ? clamp(extra.utilization) : clamp(spentUsd / extra.limit_usd * 100);
-    result.extraUsageResetsAt = parseDate(extra.resets_at);
+  if (extra != null) {
+    const currency = (extra.currency ?? "USD").toUpperCase();
+    if (extra.used_credits != null && currency === "USD") {
+      result.enterpriseSpentUsd = extra.used_credits / 100;
+      result.enterpriseLimitUsd = extra.monthly_limit == null ? null : extra.monthly_limit / 100;
+      result.enterpriseCurrency = currency;
+      if (extra.monthly_limit != null && extra.monthly_limit > 0) {
+        result.enterpriseUtilization = clamp(extra.used_credits / extra.monthly_limit * 100);
+      }
+    } else if (extra.limit_usd != null && extra.limit_usd > 0) {
+      const spentUsd = extra.spent_usd ?? 0;
+      result.extraUsageSpentUsd = spentUsd;
+      result.extraUsageLimitUsd = extra.limit_usd;
+      result.extraUsagePercent = extra.utilization != null ? clamp(extra.utilization) : clamp(spentUsd / extra.limit_usd * 100);
+      result.extraUsageResetsAt = parseDate(extra.resets_at);
+    }
   }
   return result;
 }
@@ -41473,28 +41520,82 @@ var init_leader_nudge_guidance = __esm({
 });
 
 // src/hud/stdin.ts
+function normalizeCandidate(value) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
 function getStdinCachePath() {
   const root2 = getWorktreeRoot() || process.cwd();
-  return (0, import_path121.join)(root2, ".omc", "state", "hud-stdin-cache.json");
+  for (const envVar of SESSION_ID_ENV_VARS) {
+    const candidate = normalizeCandidate(process.env[envVar]);
+    if (!candidate) continue;
+    try {
+      return (0, import_path121.join)(getSessionStateDir(candidate, root2), "hud-stdin-cache.json");
+    } catch {
+    }
+  }
+  return resolveOmcPath("state/hud-stdin-cache.json", root2);
 }
 function writeStdinCache(stdin) {
   try {
-    const root2 = getWorktreeRoot() || process.cwd();
-    const cacheDir = (0, import_path121.join)(root2, ".omc", "state");
+    const cachePath = getStdinCachePath();
+    const cacheDir = (0, import_path121.dirname)(cachePath);
     if (!(0, import_fs102.existsSync)(cacheDir)) {
       (0, import_fs102.mkdirSync)(cacheDir, { recursive: true });
     }
-    (0, import_fs102.writeFileSync)(getStdinCachePath(), JSON.stringify(stdin));
+    (0, import_fs102.writeFileSync)(cachePath, JSON.stringify(stdin));
   } catch {
   }
 }
 function readStdinCache() {
-  try {
-    const cachePath = getStdinCachePath();
-    if (!(0, import_fs102.existsSync)(cachePath)) {
+  const root2 = getWorktreeRoot() || process.cwd();
+  const scopedPath = getStdinCachePath();
+  const tryRead = (p) => {
+    try {
+      if (!(0, import_fs102.existsSync)(p)) return null;
+      return JSON.parse((0, import_fs102.readFileSync)(p, "utf-8"));
+    } catch {
       return null;
     }
-    return JSON.parse((0, import_fs102.readFileSync)(cachePath, "utf-8"));
+  };
+  const scoped = tryRead(scopedPath);
+  if (scoped) return scoped;
+  const legacyPath = resolveOmcPath("state/hud-stdin-cache.json", root2);
+  if (scopedPath !== legacyPath) {
+    return null;
+  }
+  return readMostRecentSessionCache(root2);
+}
+function readMostRecentSessionCache(root2) {
+  let sessionIds;
+  try {
+    sessionIds = listSessionIds(root2);
+  } catch {
+    return null;
+  }
+  let bestPath = null;
+  let bestMtime = -Infinity;
+  for (const sid of sessionIds) {
+    let candidate;
+    try {
+      candidate = (0, import_path121.join)(getSessionStateDir(sid, root2), "hud-stdin-cache.json");
+    } catch {
+      continue;
+    }
+    try {
+      const st = (0, import_fs102.statSync)(candidate);
+      if (!st.isFile()) continue;
+      if (st.mtimeMs > bestMtime) {
+        bestMtime = st.mtimeMs;
+        bestPath = candidate;
+      }
+    } catch {
+    }
+  }
+  if (!bestPath) return null;
+  try {
+    return JSON.parse((0, import_fs102.readFileSync)(bestPath, "utf-8"));
   } catch {
     return null;
   }
@@ -41611,7 +41712,7 @@ function getRateLimitsFromStdin(stdin) {
 function getModelName(stdin) {
   return stdin.model?.display_name ?? stdin.model?.id ?? "Unknown";
 }
-var import_fs102, import_path121, TRANSIENT_CONTEXT_PERCENT_TOLERANCE;
+var import_fs102, import_path121, TRANSIENT_CONTEXT_PERCENT_TOLERANCE, SESSION_ID_ENV_VARS;
 var init_stdin = __esm({
   "src/hud/stdin.ts"() {
     "use strict";
@@ -41619,6 +41720,7 @@ var init_stdin = __esm({
     import_path121 = require("path");
     init_worktree_paths();
     TRANSIENT_CONTEXT_PERCENT_TOLERANCE = 3;
+    SESSION_ID_ENV_VARS = ["CLAUDE_SESSION_ID", "CLAUDECODE_SESSION_ID"];
   }
 });
 
@@ -43316,6 +43418,49 @@ var init_token_usage = __esm({
   }
 });
 
+// src/hud/elements/enterprise-cost.ts
+function getColor2(percent) {
+  if (percent >= CRITICAL_THRESHOLD3) return RED6;
+  if (percent >= WARNING_THRESHOLD2) return YELLOW9;
+  return GREEN9;
+}
+function formatMoney(amount) {
+  const [intPart, decPart] = amount.toFixed(2).split(".");
+  const withCommas = (intPart ?? "0").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${withCommas}.${decPart ?? "00"}`;
+}
+function currencyPrefix(currency) {
+  return currency.toUpperCase() === "USD" ? "$" : `${currency.toUpperCase()} `;
+}
+function renderEnterpriseCost(limits, stale) {
+  if (!limits || limits.enterpriseSpentUsd === void 0) return null;
+  const staleMarker = stale ? `${DIM6}*${RESET}` : "";
+  const currency = limits.enterpriseCurrency ?? "USD";
+  const prefix = currencyPrefix(currency);
+  const spentStr = formatMoney(limits.enterpriseSpentUsd);
+  if (limits.enterpriseLimitUsd == null) {
+    return `${DIM6}spent:${RESET}${prefix}${spentStr}${staleMarker}`;
+  }
+  const limitStr = formatMoney(limits.enterpriseLimitUsd);
+  const utilization = limits.enterpriseUtilization ?? 0;
+  const rounded = Math.min(100, Math.max(0, Math.round(utilization)));
+  const color = getColor2(rounded);
+  return `${DIM6}spent:${RESET}${prefix}${spentStr}/${prefix}${limitStr} ${color}(${rounded}%)${RESET}${staleMarker}`;
+}
+var GREEN9, YELLOW9, RED6, DIM6, WARNING_THRESHOLD2, CRITICAL_THRESHOLD3;
+var init_enterprise_cost = __esm({
+  "src/hud/elements/enterprise-cost.ts"() {
+    "use strict";
+    init_colors();
+    GREEN9 = "\x1B[32m";
+    YELLOW9 = "\x1B[33m";
+    RED6 = "\x1B[31m";
+    DIM6 = "\x1B[2m";
+    WARNING_THRESHOLD2 = 70;
+    CRITICAL_THRESHOLD3 = 90;
+  }
+});
+
 // src/hud/elements/prompt-time.ts
 function formatElapsed(ms) {
   const totalSeconds = Math.floor(ms / 1e3);
@@ -43356,16 +43501,16 @@ function renderAutopilot(state, _thresholds) {
   let phaseColor;
   switch (phase) {
     case "complete":
-      phaseColor = GREEN9;
+      phaseColor = GREEN10;
       break;
     case "failed":
-      phaseColor = RED6;
+      phaseColor = RED7;
       break;
     case "validation":
       phaseColor = MAGENTA3;
       break;
     case "qa":
-      phaseColor = YELLOW9;
+      phaseColor = YELLOW10;
       break;
     default:
       phaseColor = CYAN7;
@@ -43375,7 +43520,7 @@ function renderAutopilot(state, _thresholds) {
     output += ` (iter ${iteration}/${maxIterations})`;
   }
   if (phase === "execution" && tasksTotal && tasksTotal > 0) {
-    const taskColor = tasksCompleted === tasksTotal ? GREEN9 : YELLOW9;
+    const taskColor = tasksCompleted === tasksTotal ? GREEN10 : YELLOW10;
     output += ` | Tasks: ${taskColor}${tasksCompleted || 0}/${tasksTotal}${RESET}`;
   }
   if (filesCreated && filesCreated > 0) {
@@ -43383,15 +43528,15 @@ function renderAutopilot(state, _thresholds) {
   }
   return output;
 }
-var CYAN7, GREEN9, YELLOW9, RED6, MAGENTA3, PHASE_NAMES, PHASE_INDEX;
+var CYAN7, GREEN10, YELLOW10, RED7, MAGENTA3, PHASE_NAMES, PHASE_INDEX;
 var init_autopilot2 = __esm({
   "src/hud/elements/autopilot.ts"() {
     "use strict";
     init_colors();
     CYAN7 = "\x1B[36m";
-    GREEN9 = "\x1B[32m";
-    YELLOW9 = "\x1B[33m";
-    RED6 = "\x1B[31m";
+    GREEN10 = "\x1B[32m";
+    YELLOW10 = "\x1B[33m";
+    RED7 = "\x1B[31m";
     MAGENTA3 = "\x1B[35m";
     PHASE_NAMES = {
       expansion: "Expand",
@@ -43773,18 +43918,18 @@ function renderContextLimitWarning(contextPercent, threshold, autoCompact) {
     return null;
   }
   const isCritical = safePercent >= 90;
-  const color = isCritical ? RED7 : YELLOW10;
+  const color = isCritical ? RED8 : YELLOW11;
   const icon = isCritical ? "!!" : "!";
   const action = autoCompact ? "(auto-compact queued)" : "run /compact";
   return `${color}${BOLD2}[${icon}] ctx ${safePercent}% >= ${threshold}% threshold - ${action}${RESET}`;
 }
-var YELLOW10, RED7, BOLD2;
+var YELLOW11, RED8, BOLD2;
 var init_context_warning = __esm({
   "src/hud/elements/context-warning.ts"() {
     "use strict";
     init_colors();
-    YELLOW10 = "\x1B[33m";
-    RED7 = "\x1B[31m";
+    YELLOW11 = "\x1B[33m";
+    RED8 = "\x1B[31m";
     BOLD2 = "\x1B[1m";
   }
 });
@@ -43968,7 +44113,8 @@ async function render(context, config2) {
       rendered.set("omcLabel", bold(`[OMC${versionTag}]`));
     }
   }
-  if (enabledElements.rateLimits && context.rateLimitsResult) {
+  const hasEnterpriseData = context.rateLimitsResult?.rateLimits?.enterpriseSpentUsd !== void 0;
+  if (enabledElements.rateLimits && context.rateLimitsResult && !hasEnterpriseData) {
     if (context.rateLimitsResult.rateLimits) {
       const stale = context.rateLimitsResult.stale;
       const limits = enabledElements.useBars ? renderRateLimitsWithBar(
@@ -44009,7 +44155,23 @@ async function render(context, config2) {
       if (session) rendered.set("session", session);
     }
   }
-  if (enabledElements.showTokens === true) {
+  const isEnterprise = enabledElements.enterpriseMode !== void 0 ? enabledElements.enterpriseMode : (context.subscriptionType ?? "").toLowerCase() === "enterprise" || /claude_zero/i.test(context.rateLimitTier ?? "");
+  if (isEnterprise && enabledElements.showEnterpriseCost !== false) {
+    const stale = context.rateLimitsResult?.stale;
+    const cost = renderEnterpriseCost(
+      context.rateLimitsResult?.rateLimits,
+      stale
+    );
+    if (cost) {
+      rendered.set("enterpriseCost", cost);
+    } else if (enabledElements.showTokens === true) {
+      const tokenUsage = renderTokenUsage(
+        context.lastRequestTokenUsage,
+        context.sessionTotalTokens
+      );
+      if (tokenUsage) rendered.set("tokens", tokenUsage);
+    }
+  } else if (enabledElements.showTokens === true) {
     const tokenUsage = renderTokenUsage(
       context.lastRequestTokenUsage,
       context.sessionTotalTokens
@@ -44191,6 +44353,7 @@ var init_render = __esm({
     init_thinking();
     init_session();
     init_token_usage();
+    init_enterprise_cost();
     init_prompt_time();
     init_autopilot2();
     init_cwd();
@@ -44478,6 +44641,7 @@ async function main2(watchMode = false, skipInit = false) {
     const missionBoardEnabled = config2.missionBoard?.enabled ?? config2.elements.missionBoard ?? false;
     const missionBoard = missionBoardEnabled ? await refreshMissionBoardState(cwd2, config2.missionBoard) : null;
     const contextPercent = getContextPercent(stdin);
+    const subscriptionInfo = getSubscriptionInfo();
     const context = {
       contextPercent,
       contextDisplayScope: currentSessionId ?? cwd2,
@@ -44506,6 +44670,8 @@ async function main2(watchMode = false, skipInit = false) {
       skillCallCount: transcriptData.skillCallCount,
       promptTime: hudState?.lastPromptTimestamp ? new Date(hudState.lastPromptTimestamp) : null,
       apiKeySource: config2.elements.apiKeySource ? detectApiKeySource(cwd2) : null,
+      subscriptionType: subscriptionInfo.subscriptionType,
+      rateLimitTier: subscriptionInfo.rateLimitTier,
       profileName: process.env.CLAUDE_CONFIG_DIR ? (0, import_path126.basename)(process.env.CLAUDE_CONFIG_DIR).replace(/^\./, "") : null,
       sessionSummary,
       lastToolName: transcriptData.lastToolName
