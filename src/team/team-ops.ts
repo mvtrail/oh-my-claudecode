@@ -208,6 +208,7 @@ function configFromManifest(manifest: TeamManifestV2): TeamConfig {
     leader_cwd: manifest.leader_cwd,
     team_state_root: manifest.team_state_root,
     workspace_mode: manifest.workspace_mode,
+    worktree_mode: manifest.worktree_mode,
     leader_pane_id: manifest.leader_pane_id,
     hud_pane_id: manifest.hud_pane_id,
     resize_hook_name: manifest.resize_hook_name,
@@ -722,12 +723,22 @@ export async function teamGetSummary(teamName: string, cwd: string): Promise<Tea
 
   for (const w of cfg.workers) {
     const hb = await teamReadWorkerHeartbeat(teamName, w.name, cwd);
+    const baseWorkerSummary = {
+      name: w.name,
+      working_dir: w.working_dir,
+      worktree_repo_root: w.worktree_repo_root,
+      worktree_path: w.worktree_path,
+      worktree_branch: w.worktree_branch,
+      worktree_detached: w.worktree_detached,
+      worktree_created: w.worktree_created,
+      team_state_root: w.team_state_root,
+    };
     if (!hb) {
       nonReporting.push(w.name);
-      workerEntries.push({ name: w.name, alive: false, lastTurnAt: null, turnsWithoutProgress: 0 });
+      workerEntries.push({ ...baseWorkerSummary, alive: false, lastTurnAt: null, turnsWithoutProgress: 0 });
     } else {
       workerEntries.push({
-        name: w.name,
+        ...baseWorkerSummary,
         alive: hb.alive,
         lastTurnAt: hb.last_turn_at,
         turnsWithoutProgress: 0,
@@ -747,6 +758,9 @@ export async function teamGetSummary(teamName: string, cwd: string): Promise<Tea
   return {
     teamName,
     workerCount: cfg.workers.length,
+    team_state_root: cfg.team_state_root,
+    workspace_mode: cfg.workspace_mode,
+    worktree_mode: cfg.worktree_mode,
     tasks: counts,
     workers: workerEntries,
     nonReportingWorkers: nonReporting,

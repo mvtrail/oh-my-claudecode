@@ -172,7 +172,7 @@ describe('model-contract', () => {
     });
     it('codex includes --dangerously-bypass-approvals-and-sandbox', () => {
       const args = buildLaunchArgs('codex', { teamName: 't', workerName: 'w', cwd: '/tmp' });
-      expect(args[0]).toBe('exec');
+      expect(args).not.toContain('exec');
       expect(args).not.toContain('--full-auto');
       expect(args).toContain('--dangerously-bypass-approvals-and-sandbox');
     });
@@ -269,16 +269,30 @@ describe('model-contract', () => {
   });
 
   describe('buildWorkerArgv', () => {
-    it('builds binary + args', () => {
+    it('builds codex interactive worker argv without the exec subcommand', () => {
       const mockSpawnSync = vi.mocked(spawnSync);
       mockSpawnSync.mockReturnValueOnce({ status: 1, stdout: '', stderr: '', pid: 0, output: [], signal: null } as any);
 
-      expect(buildWorkerArgv('codex', { teamName: 'my-team', workerName: 'worker-1', cwd: '/tmp' })).toEqual([
+      const argv = buildWorkerArgv('codex', { teamName: 'my-team', workerName: 'worker-1', cwd: '/tmp' });
+      expect(argv).toEqual([
         'codex',
-        'exec',
         '--dangerously-bypass-approvals-and-sandbox',
       ]);
+      expect(argv).not.toContain('exec');
       expect(mockSpawnSync).toHaveBeenCalledWith('which', ['codex'], { timeout: 5000, encoding: 'utf8' });
+      mockSpawnSync.mockRestore();
+    });
+
+    it('builds claude interactive worker argv without the exec subcommand', () => {
+      const mockSpawnSync = vi.mocked(spawnSync);
+      mockSpawnSync.mockReturnValueOnce({ status: 1, stdout: '', stderr: '', pid: 0, output: [], signal: null } as any);
+
+      const argv = buildWorkerArgv('claude', { teamName: 'my-team', workerName: 'worker-1', cwd: '/tmp' });
+
+      expect(argv[0]).toBe('claude');
+      expect(argv).toContain('--dangerously-skip-permissions');
+      expect(argv).not.toContain('exec');
+      expect(mockSpawnSync).toHaveBeenCalledWith('which', ['claude'], { timeout: 5000, encoding: 'utf8' });
       mockSpawnSync.mockRestore();
     });
 
@@ -376,10 +390,10 @@ describe('model-contract', () => {
       expect(isPromptModeAgent('claude')).toBe(false);
     });
 
-    it('codex supports prompt mode (positional argument, no flag)', () => {
-      expect(isPromptModeAgent('codex')).toBe(true);
+    it('codex launches as a persistent interactive worker, not prompt/exec mode', () => {
+      expect(isPromptModeAgent('codex')).toBe(false);
       const c = getContract('codex');
-      expect(c.supportsPromptMode).toBe(true);
+      expect(c.supportsPromptMode).toBe(false);
       expect(c.promptModeFlag).toBeUndefined();
     });
 
@@ -388,12 +402,8 @@ describe('model-contract', () => {
       expect(args).toEqual(['-p', 'Read inbox']);
     });
 
-    it('getPromptModeArgs returns instruction only (positional) for codex', () => {
-      const args = getPromptModeArgs('codex', 'Read inbox');
-      expect(args).toEqual(['Read inbox']);
-    });
-
-    it('getPromptModeArgs returns empty array for non-prompt-mode agents', () => {
+    it('getPromptModeArgs returns empty array for interactive codex and claude workers', () => {
+      expect(getPromptModeArgs('codex', 'Read inbox')).toEqual([]);
       expect(getPromptModeArgs('claude', 'Read inbox')).toEqual([]);
     });
   });

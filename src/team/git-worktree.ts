@@ -390,14 +390,6 @@ function forgetMetadataUnlocked(repoRoot: string, teamName: string, workerName: 
   const existing = readMetadata(repoRoot, teamName).filter(entry => entry.workerName !== workerName);
   writeMetadata(repoRoot, teamName, existing);
 }
-
-function forgetMetadata(repoRoot: string, teamName: string, workerName: string): void {
-  const metaLockPath = getMetadataPath(repoRoot, teamName) + '.lock';
-  withFileLockSync(metaLockPath, () => {
-    forgetMetadataUnlocked(repoRoot, teamName, workerName);
-  });
-}
-
 function assertCompatibleExistingWorktree(
   repoRoot: string,
   wtPath: string,

@@ -17777,10 +17777,10 @@ var StdioServerTransport = class {
 // src/mcp/team-server.ts
 var import_node_crypto = require("node:crypto");
 var import_child_process3 = require("child_process");
-var import_path7 = require("path");
+var import_path9 = require("path");
 var import_url = require("url");
-var import_fs7 = require("fs");
-var import_promises2 = require("fs/promises");
+var import_fs8 = require("fs");
+var import_promises3 = require("fs/promises");
 
 // src/team/tmux-session.ts
 var import_fs = require("fs");
@@ -18040,6 +18040,11 @@ async function sendToWorker(_sessionName, paneId, message) {
     return false;
   }
 }
+function isTmuxPaneNotFoundError(error2) {
+  const err = error2;
+  const text = [err?.stderr, err?.stdout, err?.message].filter((part) => typeof part === "string").join("\n").toLowerCase();
+  return /can't find pane|can't find window|can't find session|no such pane|pane not found|unknown pane/.test(text);
+}
 async function getWorkerLiveness(paneId) {
   try {
     const result = await tmuxCmdAsync([
@@ -18050,8 +18055,8 @@ async function getWorkerLiveness(paneId) {
       "#{pane_dead}"
     ]);
     return result.stdout.trim() === "0" ? "alive" : "dead";
-  } catch {
-    return "unknown";
+  } catch (error2) {
+    return isTmuxPaneNotFoundError(error2) ? "dead" : "unknown";
   }
 }
 async function isWorkerAlive(paneId) {
@@ -18112,6 +18117,246 @@ async function killTeamSession(sessionName, workerPaneIds, leaderPaneId, options
     await tmuxExecAsync(["kill-session", "-t", sessionTarget]);
   } catch {
   }
+}
+
+// src/team/monitor.ts
+var import_fs2 = require("fs");
+var import_promises2 = require("fs/promises");
+var import_path4 = require("path");
+
+// src/team/state-paths.ts
+var import_path3 = require("path");
+function normalizeTaskFileStem(taskId) {
+  const trimmed = String(taskId).trim().replace(/\.json$/i, "");
+  if (/^task-\d+$/.test(trimmed)) return trimmed;
+  if (/^\d+$/.test(trimmed)) return `task-${trimmed}`;
+  return trimmed;
+}
+var TeamPaths = {
+  root: (teamName) => `.omc/state/team/${teamName}`,
+  config: (teamName) => `.omc/state/team/${teamName}/config.json`,
+  shutdown: (teamName) => `.omc/state/team/${teamName}/shutdown.json`,
+  tasks: (teamName) => `.omc/state/team/${teamName}/tasks`,
+  taskFile: (teamName, taskId) => `.omc/state/team/${teamName}/tasks/${normalizeTaskFileStem(taskId)}.json`,
+  workers: (teamName) => `.omc/state/team/${teamName}/workers`,
+  workerDir: (teamName, workerName) => `.omc/state/team/${teamName}/workers/${workerName}`,
+  heartbeat: (teamName, workerName) => `.omc/state/team/${teamName}/workers/${workerName}/heartbeat.json`,
+  inbox: (teamName, workerName) => `.omc/state/team/${teamName}/workers/${workerName}/inbox.md`,
+  outbox: (teamName, workerName) => `.omc/state/team/${teamName}/workers/${workerName}/outbox.jsonl`,
+  ready: (teamName, workerName) => `.omc/state/team/${teamName}/workers/${workerName}/.ready`,
+  overlay: (teamName, workerName) => `.omc/state/team/${teamName}/workers/${workerName}/AGENTS.md`,
+  shutdownAck: (teamName, workerName) => `.omc/state/team/${teamName}/workers/${workerName}/shutdown-ack.json`,
+  mailbox: (teamName, workerName) => `.omc/state/team/${teamName}/mailbox/${workerName}.json`,
+  mailboxLockDir: (teamName, workerName) => `.omc/state/team/${teamName}/mailbox/.lock-${workerName}`,
+  dispatchRequests: (teamName) => `.omc/state/team/${teamName}/dispatch/requests.json`,
+  dispatchLockDir: (teamName) => `.omc/state/team/${teamName}/dispatch/.lock`,
+  workerStatus: (teamName, workerName) => `.omc/state/team/${teamName}/workers/${workerName}/status.json`,
+  workerIdleNotify: (teamName) => `.omc/state/team/${teamName}/worker-idle-notify.json`,
+  workerPrevNotifyState: (teamName, workerName) => `.omc/state/team/${teamName}/workers/${workerName}/prev-notify-state.json`,
+  events: (teamName) => `.omc/state/team/${teamName}/events.jsonl`,
+  approval: (teamName, taskId) => `.omc/state/team/${teamName}/approvals/${taskId}.json`,
+  manifest: (teamName) => `.omc/state/team/${teamName}/manifest.json`,
+  monitorSnapshot: (teamName) => `.omc/state/team/${teamName}/monitor-snapshot.json`,
+  summarySnapshot: (teamName) => `.omc/state/team/${teamName}/summary-snapshot.json`,
+  phaseState: (teamName) => `.omc/state/team/${teamName}/phase-state.json`,
+  scalingLock: (teamName) => `.omc/state/team/${teamName}/.scaling-lock`,
+  workerIdentity: (teamName, workerName) => `.omc/state/team/${teamName}/workers/${workerName}/identity.json`,
+  workerAgentsMd: (teamName) => `.omc/state/team/${teamName}/worker-agents.md`,
+  shutdownRequest: (teamName, workerName) => `.omc/state/team/${teamName}/workers/${workerName}/shutdown-request.json`
+};
+function absPath(cwd, relativePath) {
+  return (0, import_path3.isAbsolute)(relativePath) ? relativePath : (0, import_path3.join)(cwd, relativePath);
+}
+
+// src/team/governance.ts
+var DEFAULT_TEAM_TRANSPORT_POLICY = {
+  display_mode: "split_pane",
+  worker_launch_mode: "interactive",
+  dispatch_mode: "hook_preferred_with_fallback",
+  dispatch_ack_timeout_ms: 15e3
+};
+var DEFAULT_TEAM_GOVERNANCE = {
+  delegation_only: false,
+  plan_approval_required: false,
+  nested_teams_allowed: false,
+  one_team_per_leader_session: true,
+  cleanup_requires_all_workers_inactive: true
+};
+function normalizeTeamTransportPolicy(policy) {
+  return {
+    display_mode: policy?.display_mode ?? DEFAULT_TEAM_TRANSPORT_POLICY.display_mode,
+    worker_launch_mode: policy?.worker_launch_mode ?? DEFAULT_TEAM_TRANSPORT_POLICY.worker_launch_mode,
+    dispatch_mode: policy?.dispatch_mode ?? DEFAULT_TEAM_TRANSPORT_POLICY.dispatch_mode,
+    dispatch_ack_timeout_ms: typeof policy?.dispatch_ack_timeout_ms === "number" ? policy.dispatch_ack_timeout_ms : DEFAULT_TEAM_TRANSPORT_POLICY.dispatch_ack_timeout_ms
+  };
+}
+function normalizeTeamGovernance(governance, legacyPolicy) {
+  return {
+    delegation_only: governance?.delegation_only ?? legacyPolicy?.delegation_only ?? DEFAULT_TEAM_GOVERNANCE.delegation_only,
+    plan_approval_required: governance?.plan_approval_required ?? legacyPolicy?.plan_approval_required ?? DEFAULT_TEAM_GOVERNANCE.plan_approval_required,
+    nested_teams_allowed: governance?.nested_teams_allowed ?? legacyPolicy?.nested_teams_allowed ?? DEFAULT_TEAM_GOVERNANCE.nested_teams_allowed,
+    one_team_per_leader_session: governance?.one_team_per_leader_session ?? legacyPolicy?.one_team_per_leader_session ?? DEFAULT_TEAM_GOVERNANCE.one_team_per_leader_session,
+    cleanup_requires_all_workers_inactive: governance?.cleanup_requires_all_workers_inactive ?? legacyPolicy?.cleanup_requires_all_workers_inactive ?? DEFAULT_TEAM_GOVERNANCE.cleanup_requires_all_workers_inactive
+  };
+}
+function normalizeTeamManifest(manifest) {
+  return {
+    ...manifest,
+    policy: normalizeTeamTransportPolicy(manifest.policy),
+    governance: normalizeTeamGovernance(manifest.governance, manifest.policy)
+  };
+}
+
+// src/team/worker-canonicalization.ts
+function hasText(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+function hasAssignedTasks(worker) {
+  return Array.isArray(worker.assigned_tasks) && worker.assigned_tasks.length > 0;
+}
+function workerPriority(worker) {
+  if (hasText(worker.pane_id)) return 4;
+  if (typeof worker.pid === "number" && Number.isFinite(worker.pid)) return 3;
+  if (hasAssignedTasks(worker)) return 2;
+  if (typeof worker.index === "number" && worker.index > 0) return 1;
+  return 0;
+}
+function mergeAssignedTasks(primary, secondary) {
+  const merged = [];
+  for (const taskId of [...primary ?? [], ...secondary ?? []]) {
+    if (typeof taskId !== "string" || taskId.trim() === "" || merged.includes(taskId)) continue;
+    merged.push(taskId);
+  }
+  return merged;
+}
+function backfillText(primary, secondary) {
+  return hasText(primary) ? primary : secondary;
+}
+function backfillBoolean(primary, secondary) {
+  return typeof primary === "boolean" ? primary : secondary;
+}
+function backfillNumber(primary, secondary, predicate) {
+  const isUsable = (value) => typeof value === "number" && Number.isFinite(value) && (predicate ? predicate(value) : true);
+  return isUsable(primary) ? primary : isUsable(secondary) ? secondary : void 0;
+}
+function chooseWinningWorker(existing, incoming) {
+  const existingPriority = workerPriority(existing);
+  const incomingPriority = workerPriority(incoming);
+  if (incomingPriority > existingPriority) return { winner: incoming, loser: existing };
+  if (incomingPriority < existingPriority) return { winner: existing, loser: incoming };
+  if ((incoming.index ?? 0) >= (existing.index ?? 0)) return { winner: incoming, loser: existing };
+  return { winner: existing, loser: incoming };
+}
+function canonicalizeWorkers(workers) {
+  const byName = /* @__PURE__ */ new Map();
+  const duplicateNames = /* @__PURE__ */ new Set();
+  for (const worker of workers) {
+    const name = typeof worker.name === "string" ? worker.name.trim() : "";
+    if (!name) continue;
+    const normalized = {
+      ...worker,
+      name,
+      assigned_tasks: Array.isArray(worker.assigned_tasks) ? worker.assigned_tasks : []
+    };
+    const existing = byName.get(name);
+    if (!existing) {
+      byName.set(name, normalized);
+      continue;
+    }
+    duplicateNames.add(name);
+    const { winner, loser } = chooseWinningWorker(existing, normalized);
+    byName.set(name, {
+      ...winner,
+      name,
+      assigned_tasks: mergeAssignedTasks(winner.assigned_tasks, loser.assigned_tasks),
+      pane_id: backfillText(winner.pane_id, loser.pane_id),
+      pid: backfillNumber(winner.pid, loser.pid),
+      index: backfillNumber(winner.index, loser.index, (value) => value > 0) ?? 0,
+      role: backfillText(winner.role, loser.role) ?? winner.role,
+      worker_cli: backfillText(winner.worker_cli, loser.worker_cli),
+      working_dir: backfillText(winner.working_dir, loser.working_dir),
+      worktree_repo_root: backfillText(winner.worktree_repo_root, loser.worktree_repo_root),
+      worktree_path: backfillText(winner.worktree_path, loser.worktree_path),
+      worktree_branch: backfillText(winner.worktree_branch, loser.worktree_branch),
+      worktree_detached: backfillBoolean(winner.worktree_detached, loser.worktree_detached),
+      worktree_created: backfillBoolean(winner.worktree_created, loser.worktree_created),
+      team_state_root: backfillText(winner.team_state_root, loser.team_state_root)
+    });
+  }
+  return {
+    workers: Array.from(byName.values()),
+    duplicateNames: Array.from(duplicateNames.values())
+  };
+}
+function canonicalizeTeamConfigWorkers(config2) {
+  const { workers, duplicateNames } = canonicalizeWorkers(config2.workers ?? []);
+  if (duplicateNames.length > 0) {
+    console.warn(
+      `[team] canonicalized duplicate worker entries: ${duplicateNames.join(", ")}`
+    );
+  }
+  return {
+    ...config2,
+    workers,
+    worker_count: workers.length
+  };
+}
+
+// src/team/monitor.ts
+async function readJsonSafe(filePath) {
+  try {
+    if (!(0, import_fs2.existsSync)(filePath)) return null;
+    const raw = await (0, import_promises2.readFile)(filePath, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+function configFromManifest(manifest) {
+  return {
+    name: manifest.name,
+    task: manifest.task,
+    agent_type: "claude",
+    policy: manifest.policy,
+    governance: manifest.governance,
+    worker_launch_mode: manifest.policy.worker_launch_mode,
+    worker_count: manifest.worker_count,
+    max_workers: 20,
+    workers: manifest.workers,
+    created_at: manifest.created_at,
+    tmux_session: manifest.tmux_session,
+    next_task_id: manifest.next_task_id,
+    leader_cwd: manifest.leader_cwd,
+    team_state_root: manifest.team_state_root,
+    workspace_mode: manifest.workspace_mode,
+    worktree_mode: manifest.worktree_mode,
+    leader_pane_id: manifest.leader_pane_id,
+    hud_pane_id: manifest.hud_pane_id,
+    resize_hook_name: manifest.resize_hook_name,
+    resize_hook_target: manifest.resize_hook_target,
+    next_worker_index: manifest.next_worker_index
+  };
+}
+async function readTeamConfig(teamName, cwd) {
+  const [config2, manifest] = await Promise.all([
+    readJsonSafe(absPath(cwd, TeamPaths.config(teamName))),
+    readTeamManifest(teamName, cwd)
+  ]);
+  if (!config2 && !manifest) return null;
+  if (!manifest) return config2 ? canonicalizeTeamConfigWorkers(config2) : null;
+  if (!config2) return canonicalizeTeamConfigWorkers(configFromManifest(manifest));
+  return canonicalizeTeamConfigWorkers({
+    ...configFromManifest(manifest),
+    ...config2,
+    workers: [...config2.workers ?? [], ...manifest.workers ?? []],
+    worker_count: Math.max(config2.worker_count ?? 0, manifest.worker_count ?? 0),
+    next_task_id: Math.max(config2.next_task_id ?? 1, manifest.next_task_id ?? 1),
+    max_workers: Math.max(config2.max_workers ?? 0, 20)
+  });
+}
+async function readTeamManifest(teamName, cwd) {
+  const manifest = await readJsonSafe(absPath(cwd, TeamPaths.manifest(teamName)));
+  return manifest ? normalizeTeamManifest(manifest) : null;
 }
 
 // src/team/idle-nudge.ts
@@ -18203,8 +18448,8 @@ var NudgeTracker = class {
 };
 
 // src/mcp/team-job-convergence.ts
-var import_fs5 = require("fs");
-var import_path4 = require("path");
+var import_fs6 = require("fs");
+var import_path6 = require("path");
 
 // src/team/git-worktree.ts
 var import_node_fs = require("node:fs");
@@ -18212,48 +18457,48 @@ var import_node_path = require("node:path");
 var import_node_child_process = require("node:child_process");
 
 // src/team/fs-utils.ts
-var import_fs2 = require("fs");
-var import_path3 = require("path");
+var import_fs3 = require("fs");
+var import_path5 = require("path");
 function atomicWriteJson(filePath, data, mode = 384) {
-  const dir = (0, import_path3.dirname)(filePath);
-  if (!(0, import_fs2.existsSync)(dir)) (0, import_fs2.mkdirSync)(dir, { recursive: true, mode: 448 });
+  const dir = (0, import_path5.dirname)(filePath);
+  if (!(0, import_fs3.existsSync)(dir)) (0, import_fs3.mkdirSync)(dir, { recursive: true, mode: 448 });
   const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
-  (0, import_fs2.writeFileSync)(tmpPath, JSON.stringify(data, null, 2) + "\n", { encoding: "utf-8", mode });
-  (0, import_fs2.renameSync)(tmpPath, filePath);
+  (0, import_fs3.writeFileSync)(tmpPath, JSON.stringify(data, null, 2) + "\n", { encoding: "utf-8", mode });
+  (0, import_fs3.renameSync)(tmpPath, filePath);
 }
 function ensureDirWithMode(dirPath, mode = 448) {
-  if (!(0, import_fs2.existsSync)(dirPath)) (0, import_fs2.mkdirSync)(dirPath, { recursive: true, mode });
+  if (!(0, import_fs3.existsSync)(dirPath)) (0, import_fs3.mkdirSync)(dirPath, { recursive: true, mode });
 }
 function safeRealpath(p) {
   try {
-    return (0, import_fs2.realpathSync)(p);
+    return (0, import_fs3.realpathSync)(p);
   } catch {
     const segments = [];
-    let current = (0, import_path3.resolve)(p);
-    while (!(0, import_fs2.existsSync)(current)) {
-      segments.unshift((0, import_path3.basename)(current));
-      const parent = (0, import_path3.dirname)(current);
+    let current = (0, import_path5.resolve)(p);
+    while (!(0, import_fs3.existsSync)(current)) {
+      segments.unshift((0, import_path5.basename)(current));
+      const parent = (0, import_path5.dirname)(current);
       if (parent === current) break;
       current = parent;
     }
     try {
-      return (0, import_path3.join)((0, import_fs2.realpathSync)(current), ...segments);
+      return (0, import_path5.join)((0, import_fs3.realpathSync)(current), ...segments);
     } catch {
-      return (0, import_path3.resolve)(p);
+      return (0, import_path5.resolve)(p);
     }
   }
 }
 function validateResolvedPath(resolvedPath, expectedBase) {
   const absResolved = safeRealpath(resolvedPath);
   const absBase = safeRealpath(expectedBase);
-  const rel = (0, import_path3.relative)(absBase, absResolved);
-  if (rel.startsWith("..") || (0, import_path3.resolve)(absBase, rel) !== absResolved) {
+  const rel = (0, import_path5.relative)(absBase, absResolved);
+  if (rel.startsWith("..") || (0, import_path5.resolve)(absBase, rel) !== absResolved) {
     throw new Error(`Path traversal detected: "${resolvedPath}" escapes base "${expectedBase}"`);
   }
 }
 
 // src/lib/file-lock.ts
-var import_fs4 = require("fs");
+var import_fs5 = require("fs");
 var path3 = __toESM(require("path"), 1);
 
 // src/lib/atomic-write.ts
@@ -18277,7 +18522,7 @@ function ensureDirSync(dir) {
 
 // src/platform/index.ts
 var path2 = __toESM(require("path"), 1);
-var import_fs3 = require("fs");
+var import_fs4 = require("fs");
 
 // src/platform/process-utils.ts
 var import_child_process2 = require("child_process");
@@ -18305,11 +18550,11 @@ var DEFAULT_STALE_LOCK_MS = 3e4;
 var DEFAULT_RETRY_DELAY_MS = 50;
 function isLockStale(lockPath, staleLockMs) {
   try {
-    const stat = (0, import_fs4.statSync)(lockPath);
+    const stat = (0, import_fs5.statSync)(lockPath);
     const ageMs = Date.now() - stat.mtimeMs;
     if (ageMs < staleLockMs) return false;
     try {
-      const raw = (0, import_fs4.readFileSync)(lockPath, "utf-8");
+      const raw = (0, import_fs5.readFileSync)(lockPath, "utf-8");
       const payload = JSON.parse(raw);
       if (payload.pid && isProcessAlive(payload.pid)) return false;
     } catch {
@@ -18322,21 +18567,21 @@ function isLockStale(lockPath, staleLockMs) {
 function tryAcquireSync(lockPath, staleLockMs) {
   ensureDirSync(path3.dirname(lockPath));
   try {
-    const fd = (0, import_fs4.openSync)(
+    const fd = (0, import_fs5.openSync)(
       lockPath,
-      import_fs4.constants.O_CREAT | import_fs4.constants.O_EXCL | import_fs4.constants.O_WRONLY,
+      import_fs5.constants.O_CREAT | import_fs5.constants.O_EXCL | import_fs5.constants.O_WRONLY,
       384
     );
     try {
       const payload = JSON.stringify({ pid: process.pid, timestamp: Date.now() });
-      (0, import_fs4.writeSync)(fd, payload, null, "utf-8");
+      (0, import_fs5.writeSync)(fd, payload, null, "utf-8");
     } catch (writeErr) {
       try {
-        (0, import_fs4.closeSync)(fd);
+        (0, import_fs5.closeSync)(fd);
       } catch {
       }
       try {
-        (0, import_fs4.unlinkSync)(lockPath);
+        (0, import_fs5.unlinkSync)(lockPath);
       } catch {
       }
       throw writeErr;
@@ -18346,25 +18591,25 @@ function tryAcquireSync(lockPath, staleLockMs) {
     if (err && typeof err === "object" && "code" in err && err.code === "EEXIST") {
       if (isLockStale(lockPath, staleLockMs)) {
         try {
-          (0, import_fs4.unlinkSync)(lockPath);
+          (0, import_fs5.unlinkSync)(lockPath);
         } catch {
         }
         try {
-          const fd = (0, import_fs4.openSync)(
+          const fd = (0, import_fs5.openSync)(
             lockPath,
-            import_fs4.constants.O_CREAT | import_fs4.constants.O_EXCL | import_fs4.constants.O_WRONLY,
+            import_fs5.constants.O_CREAT | import_fs5.constants.O_EXCL | import_fs5.constants.O_WRONLY,
             384
           );
           try {
             const payload = JSON.stringify({ pid: process.pid, timestamp: Date.now() });
-            (0, import_fs4.writeSync)(fd, payload, null, "utf-8");
+            (0, import_fs5.writeSync)(fd, payload, null, "utf-8");
           } catch (writeErr) {
             try {
-              (0, import_fs4.closeSync)(fd);
+              (0, import_fs5.closeSync)(fd);
             } catch {
             }
             try {
-              (0, import_fs4.unlinkSync)(lockPath);
+              (0, import_fs5.unlinkSync)(lockPath);
             } catch {
             }
             throw writeErr;
@@ -18404,11 +18649,11 @@ function acquireFileLockSync(lockPath, opts) {
 }
 function releaseFileLockSync(handle) {
   try {
-    (0, import_fs4.closeSync)(handle.fd);
+    (0, import_fs5.closeSync)(handle.fd);
   } catch {
   }
   try {
-    (0, import_fs4.unlinkSync)(handle.path);
+    (0, import_fs5.unlinkSync)(handle.path);
   } catch {
   }
 }
@@ -18693,11 +18938,11 @@ function cleanupTeamWorktrees(teamName, repoRoot) {
 
 // src/mcp/team-job-convergence.ts
 function readResultArtifact(omcJobsDir, jobId) {
-  const artifactPath = (0, import_path4.join)(omcJobsDir, `${jobId}-result.json`);
-  if (!(0, import_fs5.existsSync)(artifactPath)) return { kind: "none" };
+  const artifactPath = (0, import_path6.join)(omcJobsDir, `${jobId}-result.json`);
+  if (!(0, import_fs6.existsSync)(artifactPath)) return { kind: "none" };
   let raw;
   try {
-    raw = (0, import_fs5.readFileSync)(artifactPath, "utf-8");
+    raw = (0, import_fs6.readFileSync)(artifactPath, "utf-8");
   } catch {
     return { kind: "none" };
   }
@@ -18752,47 +18997,68 @@ function isJobTerminal(job) {
 }
 function clearScopedTeamState(job) {
   if (!job.cwd || !job.teamName) {
-    return "team state cleanup skipped (missing job cwd/teamName).";
+    return { ok: true, message: "team state cleanup skipped (missing job cwd/teamName)." };
   }
   try {
     validateTeamName(job.teamName);
   } catch (error2) {
-    return `team state cleanup skipped (invalid teamName): ${error2 instanceof Error ? error2.message : String(error2)}`;
+    return {
+      ok: true,
+      message: `team state cleanup skipped (invalid teamName): ${error2 instanceof Error ? error2.message : String(error2)}`
+    };
   }
-  const stateDir = (0, import_path4.join)(job.cwd, ".omc", "state", "team", job.teamName);
+  const stateDir = (0, import_path6.join)(job.cwd, ".omc", "state", "team", job.teamName);
   let worktreeMessage = "worktree cleanup skipped.";
   try {
-    cleanupTeamWorktrees(job.teamName, job.cwd);
+    const cleanup = cleanupTeamWorktrees(job.teamName, job.cwd);
     worktreeMessage = `worktree cleanup attempted for ${job.teamName}.`;
+    if (cleanup.preserved.length > 0) {
+      return {
+        ok: false,
+        message: `${worktreeMessage} preserved ${cleanup.preserved.length} worktree(s); team state retained at ${stateDir}.`,
+        preservedWorktrees: cleanup.preserved.length,
+        reason: `worktrees_preserved:${cleanup.preserved.length}`
+      };
+    }
   } catch (error2) {
-    worktreeMessage = `worktree cleanup skipped: ${error2 instanceof Error ? error2.message : String(error2)}`;
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    return {
+      ok: false,
+      message: `worktree cleanup skipped: ${message}; team state retained at ${stateDir}.`,
+      reason: `worktree_cleanup_failed:${message}`
+    };
   }
   try {
-    if (!(0, import_fs5.existsSync)(stateDir)) {
-      return `${worktreeMessage} team state dir not found at ${stateDir}.`;
+    if (!(0, import_fs6.existsSync)(stateDir)) {
+      return { ok: true, message: `${worktreeMessage} team state dir not found at ${stateDir}.` };
     }
-    (0, import_fs5.rmSync)(stateDir, { recursive: true, force: true });
-    return `${worktreeMessage} team state dir removed at ${stateDir}.`;
+    (0, import_fs6.rmSync)(stateDir, { recursive: true, force: true });
+    return { ok: true, message: `${worktreeMessage} team state dir removed at ${stateDir}.` };
   } catch (error2) {
-    return `${worktreeMessage} team state cleanup failed at ${stateDir}: ${error2 instanceof Error ? error2.message : String(error2)}`;
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    return {
+      ok: false,
+      message: `${worktreeMessage} team state cleanup failed at ${stateDir}: ${message}`,
+      reason: `team_state_cleanup_failed:${message}`
+    };
   }
 }
 
 // src/utils/paths.ts
-var import_path6 = require("path");
-var import_fs6 = require("fs");
+var import_path8 = require("path");
+var import_fs7 = require("fs");
 var import_os2 = require("os");
 
 // src/utils/config-dir.ts
-var import_path5 = require("path");
+var import_path7 = require("path");
 var import_os = require("os");
 
 // src/utils/paths.ts
 function getStateDir() {
   if (process.platform === "win32") {
-    return process.env.LOCALAPPDATA || (0, import_path6.join)((0, import_os2.homedir)(), "AppData", "Local");
+    return process.env.LOCALAPPDATA || (0, import_path8.join)((0, import_os2.homedir)(), "AppData", "Local");
   }
-  return process.env.XDG_STATE_HOME || (0, import_path6.join)((0, import_os2.homedir)(), ".local", "state");
+  return process.env.XDG_STATE_HOME || (0, import_path8.join)((0, import_os2.homedir)(), ".local", "state");
 }
 function prefersXdgOmcDirs() {
   return process.platform !== "win32" && process.platform !== "darwin";
@@ -18804,20 +19070,20 @@ function getUserHomeDir() {
   return process.env.HOME || (0, import_os2.homedir)();
 }
 function getLegacyOmcDir() {
-  return (0, import_path6.join)(getUserHomeDir(), ".omc");
+  return (0, import_path8.join)(getUserHomeDir(), ".omc");
 }
 function getGlobalOmcStateRoot() {
   const explicitRoot = process.env.OMC_HOME?.trim();
   if (explicitRoot) {
-    return (0, import_path6.join)(explicitRoot, "state");
+    return (0, import_path8.join)(explicitRoot, "state");
   }
   if (prefersXdgOmcDirs()) {
-    return (0, import_path6.join)(getStateDir(), "omc");
+    return (0, import_path8.join)(getStateDir(), "omc");
   }
-  return (0, import_path6.join)(getLegacyOmcDir(), "state");
+  return (0, import_path8.join)(getLegacyOmcDir(), "state");
 }
 function getGlobalOmcStatePath(...segments) {
-  return (0, import_path6.join)(getGlobalOmcStateRoot(), ...segments);
+  return (0, import_path8.join)(getGlobalOmcStateRoot(), ...segments);
 }
 var STALE_THRESHOLD_MS = 24 * 60 * 60 * 1e3;
 
@@ -18917,25 +19183,52 @@ function createDeprecatedCliOnlyEnvelopeWithArgs(toolName, args) {
 }
 function persistJob(jobId, job) {
   try {
-    if (!(0, import_fs7.existsSync)(OMC_JOBS_DIR)) (0, import_fs7.mkdirSync)(OMC_JOBS_DIR, { recursive: true });
-    (0, import_fs7.writeFileSync)((0, import_path7.join)(OMC_JOBS_DIR, `${jobId}.json`), JSON.stringify(job), "utf-8");
+    if (!(0, import_fs8.existsSync)(OMC_JOBS_DIR)) (0, import_fs8.mkdirSync)(OMC_JOBS_DIR, { recursive: true });
+    (0, import_fs8.writeFileSync)((0, import_path9.join)(OMC_JOBS_DIR, `${jobId}.json`), JSON.stringify(job), "utf-8");
   } catch {
   }
 }
 function loadJobFromDisk(jobId) {
   try {
-    return JSON.parse((0, import_fs7.readFileSync)((0, import_path7.join)(OMC_JOBS_DIR, `${jobId}.json`), "utf-8"));
+    return JSON.parse((0, import_fs8.readFileSync)((0, import_path9.join)(OMC_JOBS_DIR, `${jobId}.json`), "utf-8"));
   } catch {
     return void 0;
   }
 }
 async function loadPaneIds(jobId) {
-  const p = (0, import_path7.join)(OMC_JOBS_DIR, `${jobId}-panes.json`);
+  const p = (0, import_path9.join)(OMC_JOBS_DIR, `${jobId}-panes.json`);
   try {
-    return JSON.parse(await (0, import_promises2.readFile)(p, "utf-8"));
+    return JSON.parse(await (0, import_promises3.readFile)(p, "utf-8"));
   } catch {
     return null;
   }
+}
+async function resolveCleanupPaneEvidence(job, jobId) {
+  const panes = await loadPaneIds(jobId);
+  if (panes?.paneIds?.length) return { panes };
+  if (!job.teamName || !job.cwd) {
+    return { panes, livenessUnknownReason: "worker_liveness_unknown:missing_job_team_or_cwd" };
+  }
+  const config2 = await readTeamConfig(job.teamName, job.cwd).catch(() => null);
+  if (!config2) {
+    return { panes, livenessUnknownReason: "worker_liveness_unknown:no_config_or_panes" };
+  }
+  const configPaneIds = (config2.workers ?? []).map((worker) => worker.pane_id).filter((paneId) => typeof paneId === "string" && paneId.trim().length > 0);
+  if (configPaneIds.length > 0) {
+    return {
+      panes: {
+        paneIds: configPaneIds,
+        leaderPaneId: config2.leader_pane_id ?? panes?.leaderPaneId ?? "",
+        sessionName: config2.tmux_session || panes?.sessionName,
+        ownsWindow: config2.tmux_window_owned ?? panes?.ownsWindow
+      }
+    };
+  }
+  const hasConfiguredWorkers = (config2.workers ?? []).length > 0 || config2.worker_count > 0;
+  if (hasConfiguredWorkers) {
+    return { panes, livenessUnknownReason: "worker_liveness_unknown:no_worker_pane_ids" };
+  }
+  return { panes };
 }
 function validateJobId(job_id) {
   if (!/^omc-[a-z0-9]{1,16}$/.test(job_id)) {
@@ -18993,7 +19286,7 @@ async function handleStart(args) {
   const input = startSchema.parse(args);
   validateTeamName(input.teamName);
   const jobId = `omc-${Date.now().toString(36)}${(0, import_node_crypto.randomUUID)().slice(0, 8)}`;
-  const runtimeCliPath = (0, import_path7.join)(__ownDir, "runtime-cli.cjs");
+  const runtimeCliPath = (0, import_path9.join)(__ownDir, "runtime-cli.cjs");
   const job = { status: "running", startedAt: Date.now(), teamName: input.teamName, cwd: input.cwd };
   omcTeamJobs.set(jobId, job);
   const child = (0, import_child_process3.spawn)("node", [runtimeCliPath], {
@@ -19142,31 +19435,77 @@ async function handleCleanup(args) {
   validateJobId(job_id);
   const job = omcTeamJobs.get(job_id) ?? loadJobFromDisk(job_id);
   if (!job) return { content: [{ type: "text", text: `Job ${job_id} not found` }] };
-  const panes = await loadPaneIds(job_id);
+  const blockCleanup = (paneCleanupMessage2, reason) => {
+    job.cleanupBlockedAt = (/* @__PURE__ */ new Date()).toISOString();
+    job.cleanupBlockedReason = reason;
+    delete job.cleanedUpAt;
+    persistJob(job_id, job);
+    return {
+      content: [{
+        type: "text",
+        text: `${paneCleanupMessage2} Team state/worktree cleanup preserved because ${reason}.`
+      }]
+    };
+  };
+  const { panes, livenessUnknownReason } = await resolveCleanupPaneEvidence(job, job_id);
+  if (livenessUnknownReason) return blockCleanup("Worker pane liveness could not be proven.", livenessUnknownReason);
   let paneCleanupMessage = "No pane IDs recorded for this job \u2014 pane cleanup skipped.";
   if (panes?.sessionName && (panes.ownsWindow === true || !panes.sessionName.includes(":"))) {
     const sessionMode = panes.ownsWindow === true ? panes.sessionName.includes(":") ? "dedicated-window" : "detached-session" : "detached-session";
-    await killTeamSession(
-      panes.sessionName,
-      panes.paneIds,
-      panes.leaderPaneId,
-      { sessionMode }
-    );
+    try {
+      await killTeamSession(
+        panes.sessionName,
+        panes.paneIds,
+        panes.leaderPaneId,
+        { sessionMode }
+      );
+    } catch (error2) {
+      const message = error2 instanceof Error ? error2.message : String(error2);
+      return blockCleanup("Team tmux cleanup did not complete.", `tmux_cleanup_failed:${message}`);
+    }
     paneCleanupMessage = panes.ownsWindow ? "Cleaned up team tmux window." : `Cleaned up ${panes.paneIds.length} worker pane(s).`;
   } else if (panes?.paneIds?.length) {
-    await killWorkerPanes({
-      paneIds: panes.paneIds,
-      leaderPaneId: panes.leaderPaneId,
-      teamName: job.teamName ?? "",
-      cwd: job.cwd ?? "",
-      graceMs: grace_ms ?? 1e4
-    });
+    try {
+      await killWorkerPanes({
+        paneIds: panes.paneIds,
+        leaderPaneId: panes.leaderPaneId,
+        teamName: job.teamName ?? "",
+        cwd: job.cwd ?? "",
+        graceMs: grace_ms ?? 1e4
+      });
+    } catch (error2) {
+      const message = error2 instanceof Error ? error2.message : String(error2);
+      return blockCleanup("Worker pane cleanup did not complete.", `tmux_cleanup_failed:${message}`);
+    }
     paneCleanupMessage = `Cleaned up ${panes.paneIds.length} worker pane(s).`;
   }
-  job.cleanedUpAt = (/* @__PURE__ */ new Date()).toISOString();
-  persistJob(job_id, job);
+  if (panes?.paneIds?.length) {
+    const liveness = await Promise.all(panes.paneIds.map(async (paneId) => ({
+      paneId,
+      state: await getWorkerLiveness(paneId)
+    })));
+    const alivePaneIds = liveness.filter((check2) => check2.state === "alive").map((check2) => check2.paneId);
+    if (alivePaneIds.length > 0) {
+      return blockCleanup(paneCleanupMessage, `worker_panes_still_alive:${alivePaneIds.join(",")}`);
+    }
+    const unknownPaneIds = liveness.filter((check2) => check2.state === "unknown").map((check2) => check2.paneId);
+    if (unknownPaneIds.length > 0) {
+      return blockCleanup(paneCleanupMessage, `worker_liveness_unknown:${unknownPaneIds.join(",")}`);
+    }
+  }
   const cleanupOutcome = clearScopedTeamState(job);
-  return { content: [{ type: "text", text: `${paneCleanupMessage} ${cleanupOutcome}` }] };
+  if (!cleanupOutcome.ok) {
+    job.cleanupBlockedAt = (/* @__PURE__ */ new Date()).toISOString();
+    job.cleanupBlockedReason = cleanupOutcome.reason ?? "team_state_cleanup_blocked";
+    delete job.cleanedUpAt;
+    persistJob(job_id, job);
+    return { content: [{ type: "text", text: `${paneCleanupMessage} ${cleanupOutcome.message}` }] };
+  }
+  job.cleanedUpAt = (/* @__PURE__ */ new Date()).toISOString();
+  delete job.cleanupBlockedAt;
+  delete job.cleanupBlockedReason;
+  persistJob(job_id, job);
+  return { content: [{ type: "text", text: `${paneCleanupMessage} ${cleanupOutcome.message}` }] };
 }
 var TOOLS = [
   {
@@ -19223,7 +19562,7 @@ var TOOLS = [
   },
   {
     name: "omc_run_team_cleanup",
-    description: "[DEPRECATED] CLI-only migration required. This tool no longer executes; use `omc team cleanup <job_id>`.",
+    description: "[DEPRECATED COMPAT] Prefer `omc team cleanup <job_id>`; this compatibility cleanup surface preserves team state when worker liveness or worktree cleanup is not proven safe.",
     inputSchema: {
       type: "object",
       properties: {

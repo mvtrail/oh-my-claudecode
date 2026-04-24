@@ -365,6 +365,8 @@ omc team api claim-task --input '{"team_name":"auth-review","task_id":"1","worke
 
 Supported entrypoints: direct start (`omc team [N:agent] "<task>"`), `status`, `shutdown`, and `api`.
 
+Native team worker worktrees are an opt-in/config-gated runtime-v2 rollout. See [Native Team Worktree Mode](TEAM-WORKTREE-MODE.md) for the worktree path contract, canonical `OMC_TEAM_STATE_ROOT` behavior, status fields, and dirty-worktree cleanup policy.
+
 Topology behavior:
 - inside classic tmux (`$TMUX` set): reuse the current tmux surface for split-pane or `--new-window` layouts
 - inside cmux (`CMUX_SURFACE_ID` without `$TMUX`): launch a detached tmux session for team workers

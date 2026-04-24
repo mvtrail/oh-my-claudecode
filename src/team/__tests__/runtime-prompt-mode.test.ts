@@ -188,7 +188,7 @@ describe('spawnWorkerForTask – prompt mode and interactive worker launch', () 
     rmSync(cwd, { recursive: true, force: true });
   });
 
-  it('codex worker launch args use exec prompt mode with inbox instruction', async () => {
+  it('codex worker launch args start a persistent codex pane without prompt/exec subcommands', async () => {
     const runtime = makeRuntime(cwd, 'codex');
 
     await spawnWorkerForTask(runtime, 'worker-1', 0);
@@ -201,16 +201,16 @@ describe('spawnWorkerForTask – prompt mode and interactive worker launch', () 
     const launchCmd = launchCall![launchCall!.length - 1];
 
     expect(launchCmd).toContain('/usr/local/bin/codex');
-    expect(launchCmd).toContain("'exec'");
     expect(launchCmd).toContain('--dangerously-bypass-approvals-and-sandbox');
-    expect(launchCmd).toContain('.omc/state/team/test-team/workers/worker-1/inbox.md');
-    expect(launchCmd).toContain('execute now');
-    expect(launchCmd).toContain('concrete progress');
+    expect(launchCmd).not.toContain("'exec'");
+    expect(launchCmd).not.toContain('.omc/state/team/test-team/workers/worker-1/inbox.md');
+    expect(launchCmd).not.toContain('execute now');
+    expect(launchCmd).not.toContain('concrete progress');
 
     rmSync(cwd, { recursive: true, force: true });
   });
 
-  it('codex worker uses prompt-mode startup without a second inbox notification', async () => {
+  it('codex worker uses the interactive inbox notification path like claude', async () => {
     const runtime = makeRuntime(cwd, 'codex');
 
     await spawnWorkerForTask(runtime, 'worker-1', 0);
@@ -218,8 +218,9 @@ describe('spawnWorkerForTask – prompt mode and interactive worker launch', () 
     const sendKeysCalls = tmuxCalls.args.filter(
       args => args[0] === 'send-keys' && args.includes('-l')
     );
-    expect(sendKeysCalls.length).toBe(1);
-    expect(sendKeysCalls[0]?.[sendKeysCalls[0].length - 1]).toContain('execute now');
+    expect(sendKeysCalls.length).toBe(2);
+    const readInstructionCall = sendKeysCalls.find((args) => (args[args.length - 1] ?? '').includes('execute now'));
+    expect(readInstructionCall).toBeDefined();
 
     rmSync(cwd, { recursive: true, force: true });
   });

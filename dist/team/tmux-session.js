@@ -55,7 +55,7 @@ export function getDefaultShell() {
     if (process.platform === 'win32' && !isUnixLikeOnWindows()) {
         return process.env.COMSPEC || 'cmd.exe';
     }
-    const shell = process.env.SHELL || '/bin/sh';
+    const shell = process.env.SHELL || '/bin/bash';
     // Validate that the shell supports our launch script syntax.
     // Unsupported shells (tcsh, csh, etc.) fall back to /bin/sh.
     const name = basename(shell.replace(/\\/g, '/')).replace(/\.(exe|cmd|bat)$/i, '');
@@ -769,6 +769,14 @@ export async function injectToLeaderPane(sessionName, leaderPaneId, message) {
     catch { /* best-effort */ }
     return sendToWorker(sessionName, leaderPaneId, prefixed);
 }
+function isTmuxPaneNotFoundError(error) {
+    const err = error;
+    const text = [err?.stderr, err?.stdout, err?.message]
+        .filter((part) => typeof part === 'string')
+        .join('\n')
+        .toLowerCase();
+    return /can't find pane|can't find window|can't find session|no such pane|pane not found|unknown pane/.test(text);
+}
 export async function getWorkerLiveness(paneId) {
     try {
         const result = await tmuxCmdAsync([
@@ -776,8 +784,8 @@ export async function getWorkerLiveness(paneId) {
         ]);
         return result.stdout.trim() === '0' ? 'alive' : 'dead';
     }
-    catch {
-        return 'unknown';
+    catch (error) {
+        return isTmuxPaneNotFoundError(error) ? 'dead' : 'unknown';
     }
 }
 export async function isWorkerAlive(paneId) {

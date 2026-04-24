@@ -48,6 +48,7 @@ import { listDispatchRequests, markDispatchRequestDelivered, markDispatchRequest
 import { generateMailboxTriggerMessage } from './worker-bootstrap.js';
 import { shutdownTeam } from './runtime.js';
 import { shutdownTeamV2 } from './runtime-v2.js';
+import { inspectTeamWorktreeCleanupSafety } from './git-worktree.js';
 import { createSwallowedErrorLogger } from '../lib/swallowed-error.js';
 
 const TEAM_UPDATE_TASK_MUTABLE_FIELDS = new Set(['subject', 'description', 'blocked_by', 'requires_code_change']);
@@ -194,10 +195,28 @@ function isLegacyRuntimeConfig(config: unknown): config is { tmuxSession?: strin
   return !!config && typeof config === 'object' && Array.isArray((config as { agentTypes?: unknown[] }).agentTypes);
 }
 
+function assertNoNativeWorktreeCleanupEvidence(teamName: string, cwd: string): void {
+  const safety = inspectTeamWorktreeCleanupSafety(teamName, cwd);
+  if (!safety.hasEvidence) return;
+
+  const evidence = safety.blockers.length > 0
+    ? safety.blockers
+    : safety.entries.map((entry) => ({
+      workerName: entry.workerName,
+      path: entry.path,
+      reason: 'worktree_cleanup_evidence_present',
+    }));
+  const details = evidence
+    .map((item) => `${item.workerName}:${item.reason}:${item.path}`)
+    .join(';');
+  throw new Error(`cleanup_blocked:worktree_cleanup_evidence_present:${details}`);
+}
+
 async function executeTeamCleanupViaRuntime(teamName: string, cwd: string): Promise<void> {
   const config = await teamReadConfig(teamName, cwd) as unknown;
 
   if (!config) {
+    assertNoNativeWorktreeCleanupEvidence(teamName, cwd);
     await teamCleanup(teamName, cwd);
     return;
   }
@@ -219,6 +238,7 @@ async function executeTeamCleanupViaRuntime(teamName: string, cwd: string): Prom
     return;
   }
 
+  assertNoNativeWorktreeCleanupEvidence(teamName, cwd);
   await teamCleanup(teamName, cwd);
 }
 
@@ -288,7 +308,10 @@ function resolveTeamWorkingDirectory(teamName: string, preferredCwd: string): st
   if (!normalizedTeamName) return preferredCwd;
   const envTeamStateRoot = readTeamStateRootFromEnv();
   if (typeof envTeamStateRoot === 'string' && envTeamStateRoot.trim() !== '') {
-    return stateRootToWorkingDirectory(envTeamStateRoot.trim());
+    const envWorkingDirectory = stateRootToWorkingDirectory(envTeamStateRoot.trim());
+    if (teamStateExists(normalizedTeamName, envWorkingDirectory)) {
+      return envWorkingDirectory;
+    }
   }
 
   const seeds: string[] = [];
@@ -808,9 +831,11 @@ export async function executeTeamApiOperation(
           pid: args.pid as number | undefined,
           pane_id: args.pane_id as string | undefined,
           working_dir: args.working_dir as string | undefined,
+          worktree_repo_root: args.worktree_repo_root as string | undefined,
           worktree_path: args.worktree_path as string | undefined,
           worktree_branch: args.worktree_branch as string | undefined,
           worktree_detached: args.worktree_detached as boolean | undefined,
+          worktree_created: args.worktree_created as boolean | undefined,
           team_state_root: args.team_state_root as string | undefined,
         }, cwd);
         return { ok: true, operation, data: { worker } };
@@ -849,9 +874,22 @@ export async function executeTeamApiOperation(
         return { ok: true, operation, data: { team_name: teamName } };
       }
       case 'orphan-cleanup': {
-        // Destructive escape hatch: always calls teamCleanup directly, bypasses shutdown orchestration
+        // Destructive escape hatch: calls teamCleanup directly, bypassing shutdown orchestration.
+        // Native worktree recovery metadata/root AGENTS backups are protected unless callers
+        // explicitly acknowledge that this force path may delete those recovery records.
         const teamName = String(args.team_name || '').trim();
         if (!teamName) return { ok: false, operation, error: { code: 'invalid_input', message: 'team_name is required' } };
+        const safety = inspectTeamWorktreeCleanupSafety(teamName, cwd);
+        if (safety.hasEvidence && args.acknowledge_lost_worktree_recovery !== true) {
+          return {
+            ok: false,
+            operation,
+            error: {
+              code: 'invalid_input',
+              message: 'orphan_cleanup_blocked:worktree_recovery_evidence_present; pass acknowledge_lost_worktree_recovery=true only after manually preserving or intentionally discarding worker worktrees and root AGENTS backups',
+            },
+          };
+        }
         await teamCleanup(teamName, cwd);
         return { ok: true, operation, data: { team_name: teamName } };
       }

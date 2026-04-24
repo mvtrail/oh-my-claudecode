@@ -53,10 +53,6 @@ import {
 
 // ── Environment gate ──────────────────────────────────────────────────────────
 
-function sharedStateRoot(cwd: string): string {
-  return `${cwd}/.omc/state`;
-}
-
 const OMC_TEAM_SCALING_ENABLED_ENV = 'OMC_TEAM_SCALING_ENABLED';
 const CLI_AGENT_TYPES = new Set<CliAgentType>(['claude', 'codex', 'gemini']);
 
@@ -146,7 +142,7 @@ export async function scaleUp(
       };
     }
 
-    const teamStateRoot = config.team_state_root ?? sharedStateRoot(leaderCwd);
+    const teamStateRoot = config.team_state_root ?? `${leaderCwd}/.omc/state/team/${sanitized}`;
     const worktreeMode: TeamWorktreeMode = config.worktree_mode ?? 'disabled';
 
     // Resolve the monotonic worker index counter

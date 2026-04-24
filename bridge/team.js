@@ -262,6 +262,7 @@ async function transitionTaskStatus(taskId, from, to, claimToken, deps) {
     const updated = existing ? { ...existing, completedEventTaskIds: { ...existing.completedEventTaskIds ?? {}, [taskId]: true } } : {
       taskStatusById: {},
       workerAliveByName: {},
+      workerLivenessByName: {},
       workerStateByName: {},
       workerTurnCountByName: {},
       workerTaskIdByName: {},
@@ -401,9 +402,11 @@ function canonicalizeWorkers(workers) {
       role: backfillText(winner.role, loser.role) ?? winner.role,
       worker_cli: backfillText(winner.worker_cli, loser.worker_cli),
       working_dir: backfillText(winner.working_dir, loser.working_dir),
+      worktree_repo_root: backfillText(winner.worktree_repo_root, loser.worktree_repo_root),
       worktree_path: backfillText(winner.worktree_path, loser.worktree_path),
       worktree_branch: backfillText(winner.worktree_branch, loser.worktree_branch),
       worktree_detached: backfillBoolean(winner.worktree_detached, loser.worktree_detached),
+      worktree_created: backfillBoolean(winner.worktree_created, loser.worktree_created),
       team_state_root: backfillText(winner.team_state_root, loser.team_state_root)
     });
   }
@@ -580,6 +583,7 @@ function configFromManifest(manifest) {
     leader_cwd: manifest.leader_cwd,
     team_state_root: manifest.team_state_root,
     workspace_mode: manifest.workspace_mode,
+    worktree_mode: manifest.worktree_mode,
     leader_pane_id: manifest.leader_pane_id,
     hud_pane_id: manifest.hud_pane_id,
     resize_hook_name: manifest.resize_hook_name,
@@ -923,12 +927,22 @@ async function teamGetSummary(teamName, cwd) {
   const nonReporting = [];
   for (const w of cfg.workers) {
     const hb = await teamReadWorkerHeartbeat(teamName, w.name, cwd);
+    const baseWorkerSummary = {
+      name: w.name,
+      working_dir: w.working_dir,
+      worktree_repo_root: w.worktree_repo_root,
+      worktree_path: w.worktree_path,
+      worktree_branch: w.worktree_branch,
+      worktree_detached: w.worktree_detached,
+      worktree_created: w.worktree_created,
+      team_state_root: w.team_state_root
+    };
     if (!hb) {
       nonReporting.push(w.name);
-      workerEntries.push({ name: w.name, alive: false, lastTurnAt: null, turnsWithoutProgress: 0 });
+      workerEntries.push({ ...baseWorkerSummary, alive: false, lastTurnAt: null, turnsWithoutProgress: 0 });
     } else {
       workerEntries.push({
-        name: w.name,
+        ...baseWorkerSummary,
         alive: hb.alive,
         lastTurnAt: hb.last_turn_at,
         turnsWithoutProgress: 0
@@ -946,6 +960,9 @@ async function teamGetSummary(teamName, cwd) {
   return {
     teamName,
     workerCount: cfg.workers.length,
+    team_state_root: cfg.team_state_root,
+    workspace_mode: cfg.workspace_mode,
+    worktree_mode: cfg.worktree_mode,
     tasks: counts,
     workers: workerEntries,
     nonReportingWorkers: nonReporting,
@@ -1746,7 +1763,7 @@ function getDefaultShell() {
   if (process.platform === "win32" && !isUnixLikeOnWindows()) {
     return process.env.COMSPEC || "cmd.exe";
   }
-  const shell = process.env.SHELL || "/bin/sh";
+  const shell = process.env.SHELL || "/bin/bash";
   const name = basename3(shell.replace(/\\/g, "/")).replace(/\.(exe|cmd|bat)$/i, "");
   if (!SUPPORTED_POSIX_SHELLS.has(name)) {
     return "/bin/sh";
@@ -2309,6 +2326,11 @@ async function injectToLeaderPane(sessionName2, leaderPaneId, message) {
   }
   return sendToWorker(sessionName2, leaderPaneId, prefixed);
 }
+function isTmuxPaneNotFoundError(error) {
+  const err = error;
+  const text = [err?.stderr, err?.stdout, err?.message].filter((part) => typeof part === "string").join("\n").toLowerCase();
+  return /can't find pane|can't find window|can't find session|no such pane|pane not found|unknown pane/.test(text);
+}
 async function getWorkerLiveness(paneId) {
   try {
     const result = await tmuxCmdAsync([
@@ -2319,8 +2341,8 @@ async function getWorkerLiveness(paneId) {
       "#{pane_dead}"
     ]);
     return result.stdout.trim() === "0" ? "alive" : "dead";
-  } catch {
-    return "unknown";
+  } catch (error) {
+    return isTmuxPaneNotFoundError(error) ? "dead" : "unknown";
   }
 }
 async function isWorkerAlive(paneId) {
@@ -4431,9 +4453,12 @@ var init_model_contract = __esm({
         agentType: "codex",
         binary: "codex",
         installInstructions: "Install Codex CLI: npm install -g @openai/codex",
-        supportsPromptMode: true,
+        // Team workers must be persistent interactive panes. Do not use `codex exec`
+        // or positional prompt mode here; runtime dispatch writes inbox.md and nudges
+        // the live Codex TUI with `codex` as the worker process.
+        supportsPromptMode: false,
         buildLaunchArgs(model, extraFlags = []) {
-          const args = ["exec", "--dangerously-bypass-approvals-and-sandbox"];
+          const args = ["--dangerously-bypass-approvals-and-sandbox"];
           if (model) args.push("--model", model);
           return [...args, ...extraFlags];
         },
@@ -4516,8 +4541,7 @@ function buildInstructionPath(...parts) {
   return join13(...parts).replaceAll("\\", "/");
 }
 function buildTeamStateInstructionPath(teamName, instructionStateRoot, ...teamRelativeParts) {
-  const rootIncludesTeam = instructionStateRoot.endsWith(`/team/${teamName}`);
-  const baseParts = rootIncludesTeam ? [instructionStateRoot] : [instructionStateRoot, "team", teamName];
+  const baseParts = instructionStateRoot === DEFAULT_INSTRUCTION_STATE_ROOT ? [instructionStateRoot, "team", teamName] : [instructionStateRoot];
   return buildInstructionPath(...baseParts, ...teamRelativeParts);
 }
 function generateTriggerMessage(teamName, workerName, teamStateRoot3 = DEFAULT_INSTRUCTION_STATE_ROOT) {
@@ -4646,8 +4670,8 @@ Use the CLI API for all task lifecycle operations. Do NOT directly edit task fil
 - Release claim (rollback): \`${releaseClaimCommand}\`
 
 ## Canonical Team State Root
-- Resolve the team state root in this order: \`OMC_TEAM_STATE_ROOT\` env -> worker identity \`team_state_root\` -> config/manifest \`team_state_root\` -> ${params.cwd}/.omc/state.
-- \`OMC_TEAM_STATE_ROOT\` is the shared state root (\`.../.omc/state\`). Worker-facing trigger paths append \`team/${teamName}\` below it so leader dispatch and worker instructions use the same canonical mailbox/task paths.
+- Resolve the team state root in this order: \`OMC_TEAM_STATE_ROOT\` env -> worker identity \`team_state_root\` -> config/manifest \`team_state_root\` -> ${params.cwd}/.omc/state/team/${teamName}.
+- \`OMC_TEAM_STATE_ROOT\` is the team-specific root (\`.../.omc/state/team/${teamName}\`). When it is set, append worker/mailbox paths directly below it; do not append another \`team/${teamName}\` segment.
 - Worktree-backed workers MUST use the canonical leader-owned state root for inbox, mailbox, task lifecycle, status, heartbeat, and shutdown files; do not use a local worktree \`.omc/state\` when \`OMC_TEAM_STATE_ROOT\` is set.
 
 ## Communication Protocol
@@ -5516,6 +5540,7 @@ function configFromManifest2(manifest) {
     leader_cwd: manifest.leader_cwd,
     team_state_root: manifest.team_state_root,
     workspace_mode: manifest.workspace_mode,
+    worktree_mode: manifest.worktree_mode,
     leader_pane_id: manifest.leader_pane_id,
     hud_pane_id: manifest.hud_pane_id,
     resize_hook_name: manifest.resize_hook_name,
@@ -5569,6 +5594,7 @@ async function readMonitorSnapshot(teamName, cwd) {
     return {
       taskStatusById: parsed.taskStatusById ?? {},
       workerAliveByName: parsed.workerAliveByName ?? {},
+      workerLivenessByName: parsed.workerLivenessByName ?? {},
       workerStateByName: parsed.workerStateByName ?? {},
       workerTurnCountByName: parsed.workerTurnCountByName ?? {},
       workerTaskIdByName: parsed.workerTaskIdByName ?? {},
@@ -5634,6 +5660,7 @@ async function saveTeamConfig(config, cwd) {
       leader_cwd: config.leader_cwd,
       team_state_root: config.team_state_root,
       workspace_mode: config.workspace_mode,
+      worktree_mode: config.worktree_mode,
       leader_pane_id: config.leader_pane_id,
       hud_pane_id: config.hud_pane_id,
       resize_hook_name: config.resize_hook_name,
@@ -5647,9 +5674,9 @@ async function saveTeamConfig(config, cwd) {
 }
 async function cleanupTeamState(teamName, cwd) {
   const root = absPath(cwd, TeamPaths.root(teamName));
-  const { rm: rm5 } = await import("fs/promises");
+  const { rm: rm6 } = await import("fs/promises");
   try {
-    await rm5(root, { recursive: true, force: true });
+    await rm6(root, { recursive: true, force: true });
   } catch {
   }
 }
@@ -5709,7 +5736,8 @@ async function emitMonitorDerivedEvents(teamName, tasks, workers, previousSnapsh
   for (const worker of workers) {
     const prevAlive = previousSnapshot.workerAliveByName?.[worker.name];
     const prevState = previousSnapshot.workerStateByName?.[worker.name];
-    if (prevAlive === true && !worker.alive) {
+    const currentLiveness = worker.liveness ?? (worker.alive ? "alive" : "dead");
+    if (prevAlive === true && currentLiveness === "dead") {
       await appendTeamEvent(teamName, {
         type: "worker_stopped",
         worker: worker.name,
@@ -6212,11 +6240,8 @@ __export(runtime_v2_exports, {
 });
 import { join as join18, resolve as resolve4 } from "path";
 import { existsSync as existsSync15 } from "fs";
-import { mkdir as mkdir7, readdir as readdir2, readFile as readFile9, writeFile as writeFile5 } from "fs/promises";
+import { mkdir as mkdir7, readdir as readdir2, readFile as readFile9, rm as rm4, writeFile as writeFile5 } from "fs/promises";
 import { performance } from "perf_hooks";
-function sharedStateRoot(cwd) {
-  return join18(cwd, ".omc", "state");
-}
 function isRuntimeV2Enabled(env = process.env) {
   const raw = env.OMC_RUNTIME_V2;
   if (!raw) return true;
@@ -6270,14 +6295,9 @@ function resolvePreflightBinaryPath(agentType) {
     throw err;
   }
 }
-async function isWorkerPaneAlive(paneId) {
-  if (!paneId) return false;
-  try {
-    const { isWorkerAlive: isWorkerAlive2 } = await Promise.resolve().then(() => (init_tmux_session(), tmux_session_exports));
-    return await isWorkerAlive2(paneId);
-  } catch {
-    return false;
-  }
+async function getWorkerPaneLiveness(paneId) {
+  if (!paneId) return "dead";
+  return getWorkerLiveness(paneId);
 }
 async function captureWorkerPane(paneId) {
   if (!paneId) return "";
@@ -6443,7 +6463,7 @@ async function spawnV2Worker(opts) {
   }
   const envVars = {
     ...getWorkerEnv(opts.teamName, opts.workerName, opts.agentType),
-    OMC_TEAM_STATE_ROOT: sharedStateRoot(opts.cwd),
+    OMC_TEAM_STATE_ROOT: teamStateRoot(opts.cwd, opts.teamName),
     OMC_TEAM_LEADER_CWD: opts.cwd,
     ...opts.worktreePath ? { OMC_TEAM_WORKTREE_PATH: opts.worktreePath } : {},
     ...opts.workerCwd ? { OMC_TEAM_WORKER_CWD: opts.workerCwd } : {}
@@ -6560,6 +6580,50 @@ async function spawnV2Worker(opts) {
     ...outputFile ? { outputFile } : {}
   };
 }
+async function rollbackUnpersistedNativeWorktreeStartup(teamName, cwd, cause) {
+  const safety = inspectTeamWorktreeCleanupSafety(teamName, cwd);
+  if (!safety.hasEvidence) return;
+  const teamRoot = absPath(cwd, TeamPaths.root(teamName));
+  const errorMessage = cause instanceof Error ? cause.message : String(cause);
+  try {
+    const cleanup = cleanupTeamWorktrees(teamName, cwd);
+    if (cleanup.preserved.length === 0) {
+      await rm4(teamRoot, { recursive: true, force: true });
+      return;
+    }
+    await mkdir7(teamRoot, { recursive: true });
+    await writeFile5(join18(teamRoot, "startup-failure.json"), JSON.stringify({
+      reason: "startup_failed_before_config_persisted",
+      error: errorMessage,
+      preserved: cleanup.preserved,
+      recorded_at: (/* @__PURE__ */ new Date()).toISOString()
+    }, null, 2), "utf-8");
+  } catch (rollbackError) {
+    await mkdir7(teamRoot, { recursive: true });
+    await writeFile5(join18(teamRoot, "startup-failure.json"), JSON.stringify({
+      reason: "startup_failed_before_config_persisted",
+      error: errorMessage,
+      rollback_error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+      recorded_at: (/* @__PURE__ */ new Date()).toISOString()
+    }, null, 2), "utf-8");
+  }
+}
+async function rollbackStartedNativeWorktreeStartup(args) {
+  try {
+    await killTeamSession(
+      args.sessionName,
+      args.workerPaneIds,
+      args.leaderPaneId ?? void 0,
+      { sessionMode: args.sessionMode }
+    );
+  } catch (killError) {
+    process.stderr.write(
+      `[team/runtime-v2] startup rollback tmux cleanup failed: ${killError instanceof Error ? killError.message : String(killError)}
+`
+    );
+  }
+  await rollbackUnpersistedNativeWorktreeStartup(args.teamName, args.cwd, args.cause);
+}
 async function startTeamV2(config) {
   const sanitized = sanitizeTeamName(config.teamName);
   const leaderCwd = resolve4(config.cwd);
@@ -6631,14 +6695,19 @@ async function startTeamV2(config) {
   }
   const workerNames = Array.from({ length: config.workerCount }, (_, index) => `worker-${index + 1}`);
   const workerWorktrees = /* @__PURE__ */ new Map();
-  if (worktreeMode !== "disabled") {
-    for (const workerName of workerNames) {
-      const worktree = ensureWorkerWorktree(sanitized, workerName, leaderCwd, {
-        mode: worktreeMode,
-        requireCleanLeader: true
-      });
-      if (worktree) workerWorktrees.set(workerName, worktree);
+  try {
+    if (worktreeMode !== "disabled") {
+      for (const workerName of workerNames) {
+        const worktree = ensureWorkerWorktree(sanitized, workerName, leaderCwd, {
+          mode: worktreeMode,
+          requireCleanLeader: true
+        });
+        if (worktree) workerWorktrees.set(workerName, worktree);
+      }
     }
+  } catch (error) {
+    await rollbackUnpersistedNativeWorktreeStartup(sanitized, leaderCwd, error);
+    throw error;
   }
   const workerNameSet = new Set(workerNames);
   const startupAllocations = [];
@@ -6666,32 +6735,43 @@ async function startTeamV2(config) {
       startupAllocations.push({ workerName: r.workerName, taskIndex: Number(r.taskId) });
     }
   }
-  for (let i = 0; i < workerNames.length; i++) {
-    const wName = workerNames[i];
-    const agentType = agentTypes[i % agentTypes.length] ?? agentTypes[0] ?? "claude";
-    await ensureWorkerStateDir(sanitized, wName, leaderCwd);
-    const overlayPath = await writeWorkerOverlay({
-      teamName: sanitized,
-      workerName: wName,
-      agentType,
-      tasks: config.tasks.map((t, idx) => ({
-        id: String(idx + 1),
-        subject: t.subject,
-        description: t.description
-      })),
-      cwd: leaderCwd,
-      ...config.rolePrompt ? { bootstrapInstructions: config.rolePrompt } : {},
-      ...workerWorktrees.has(wName) ? { instructionStateRoot: "$OMC_TEAM_STATE_ROOT" } : {}
-    });
-    const worktree = workerWorktrees.get(wName);
-    if (worktree) {
-      const overlayContent = await readFile9(overlayPath, "utf-8");
-      installWorktreeRootAgents(sanitized, wName, leaderCwd, worktree.path, overlayContent);
+  try {
+    for (let i = 0; i < workerNames.length; i++) {
+      const wName = workerNames[i];
+      const agentType = agentTypes[i % agentTypes.length] ?? agentTypes[0] ?? "claude";
+      await ensureWorkerStateDir(sanitized, wName, leaderCwd);
+      const overlayPath = await writeWorkerOverlay({
+        teamName: sanitized,
+        workerName: wName,
+        agentType,
+        tasks: config.tasks.map((t, idx) => ({
+          id: String(idx + 1),
+          subject: t.subject,
+          description: t.description
+        })),
+        cwd: leaderCwd,
+        ...config.rolePrompt ? { bootstrapInstructions: config.rolePrompt } : {},
+        ...workerWorktrees.has(wName) ? { instructionStateRoot: "$OMC_TEAM_STATE_ROOT" } : {}
+      });
+      const worktree = workerWorktrees.get(wName);
+      if (worktree) {
+        const overlayContent = await readFile9(overlayPath, "utf-8");
+        installWorktreeRootAgents(sanitized, wName, leaderCwd, worktree.path, overlayContent);
+      }
     }
+  } catch (error) {
+    await rollbackUnpersistedNativeWorktreeStartup(sanitized, leaderCwd, error);
+    throw error;
   }
-  const session = await createTeamSession(sanitized, 0, leaderCwd, {
-    newWindow: Boolean(config.newWindow)
-  });
+  let session;
+  try {
+    session = await createTeamSession(sanitized, 0, leaderCwd, {
+      newWindow: Boolean(config.newWindow)
+    });
+  } catch (error) {
+    await rollbackUnpersistedNativeWorktreeStartup(sanitized, leaderCwd, error);
+    throw error;
+  }
   const sessionName2 = session.sessionName;
   const leaderPaneId = session.leaderPaneId;
   const ownsWindow = session.sessionMode !== "split-pane";
@@ -6704,7 +6784,7 @@ async function startTeamV2(config) {
       role: config.workerRoles?.[i] ?? (agentTypes[i % agentTypes.length] ?? agentTypes[0] ?? "claude"),
       assigned_tasks: [],
       working_dir: worktree?.path ?? leaderCwd,
-      team_state_root: sharedStateRoot(leaderCwd),
+      team_state_root: teamStateRoot(leaderCwd, sanitized),
       ...worktree ? {
         worktree_repo_root: leaderCwd,
         worktree_path: worktree.path,
@@ -6729,7 +6809,7 @@ async function startTeamV2(config) {
     tmux_window_owned: ownsWindow,
     next_task_id: config.tasks.length + 1,
     leader_cwd: leaderCwd,
-    team_state_root: sharedStateRoot(leaderCwd),
+    team_state_root: teamStateRoot(leaderCwd, sanitized),
     leader_pane_id: leaderPaneId,
     hud_pane_id: null,
     resize_hook_name: null,
@@ -6738,7 +6818,20 @@ async function startTeamV2(config) {
     workspace_mode: workspaceMode,
     worktree_mode: worktreeMode
   };
-  await saveTeamConfig(teamConfig, leaderCwd);
+  try {
+    await saveTeamConfig(teamConfig, leaderCwd);
+  } catch (error) {
+    await rollbackStartedNativeWorktreeStartup({
+      teamName: sanitized,
+      cwd: leaderCwd,
+      cause: error,
+      sessionName: sessionName2,
+      leaderPaneId,
+      workerPaneIds,
+      sessionMode: session.sessionMode
+    });
+    throw error;
+  }
   const permissionsSnapshot = {
     approval_mode: process.env.OMC_APPROVAL_MODE || "default",
     sandbox_mode: process.env.OMC_SANDBOX_MODE || "default",
@@ -6771,7 +6864,20 @@ async function startTeamV2(config) {
     resize_hook_target: null,
     next_worker_index: teamConfig.next_worker_index
   };
-  await writeFile5(absPath(leaderCwd, TeamPaths.manifest(sanitized)), JSON.stringify(teamManifest, null, 2), "utf-8");
+  try {
+    await writeFile5(absPath(leaderCwd, TeamPaths.manifest(sanitized)), JSON.stringify(teamManifest, null, 2), "utf-8");
+  } catch (error) {
+    await rollbackStartedNativeWorktreeStartup({
+      teamName: sanitized,
+      cwd: leaderCwd,
+      cause: error,
+      sessionName: sessionName2,
+      leaderPaneId,
+      workerPaneIds,
+      sessionMode: session.sessionMode
+    });
+    throw error;
+  }
   const initialStartupAllocations = [];
   const seenStartupWorkers = /* @__PURE__ */ new Set();
   for (const decision of startupAllocations) {
@@ -6780,62 +6886,88 @@ async function startTeamV2(config) {
     seenStartupWorkers.add(decision.workerName);
     if (initialStartupAllocations.length >= config.workerCount) break;
   }
-  for (const decision of initialStartupAllocations) {
-    const wName = decision.workerName;
-    const workerIndex = Number.parseInt(wName.replace("worker-", ""), 10) - 1;
-    const taskId = String(decision.taskIndex + 1);
-    const task = config.tasks[decision.taskIndex];
-    if (!task || workerIndex < 0) continue;
-    const fallbackAgent = agentTypes[workerIndex % agentTypes.length] ?? agentTypes[0] ?? "claude";
-    const assignment = resolveTaskAssignment(
-      task,
-      resolvedRouting,
-      pluginCfg.team?.roleRouting,
-      resolvedBinaryPaths,
-      fallbackAgent
-    );
-    const workerLaunch = await spawnV2Worker({
-      sessionName: sessionName2,
-      leaderPaneId,
-      existingWorkerPaneIds: workerPaneIds,
-      teamName: sanitized,
-      workerName: wName,
-      workerIndex,
-      agentType: assignment.agentType,
-      task,
-      taskId,
-      cwd: leaderCwd,
-      workerCwd: workersInfo[workerIndex]?.working_dir ?? leaderCwd,
-      worktreePath: workersInfo[workerIndex]?.worktree_path,
-      resolvedBinaryPaths,
-      ...assignment.model ? { model: assignment.model } : {},
-      ...assignment.role ? { role: assignment.role } : {}
-    });
-    if (workerLaunch.paneId) {
-      workerPaneIds.push(workerLaunch.paneId);
-      const workerInfo = workersInfo[workerIndex];
-      if (workerInfo) {
-        workerInfo.pane_id = workerLaunch.paneId;
-        workerInfo.assigned_tasks = workerLaunch.startupAssigned ? [taskId] : [];
-        workerInfo.worker_cli = assignment.agentType;
-        if (workerLaunch.outputFile) {
-          workerInfo.output_file = workerLaunch.outputFile;
+  try {
+    for (const decision of initialStartupAllocations) {
+      const wName = decision.workerName;
+      const workerIndex = Number.parseInt(wName.replace("worker-", ""), 10) - 1;
+      const taskId = String(decision.taskIndex + 1);
+      const task = config.tasks[decision.taskIndex];
+      if (!task || workerIndex < 0) continue;
+      const fallbackAgent = agentTypes[workerIndex % agentTypes.length] ?? agentTypes[0] ?? "claude";
+      const assignment = resolveTaskAssignment(
+        task,
+        resolvedRouting,
+        pluginCfg.team?.roleRouting,
+        resolvedBinaryPaths,
+        fallbackAgent
+      );
+      const workerLaunch = await spawnV2Worker({
+        sessionName: sessionName2,
+        leaderPaneId,
+        existingWorkerPaneIds: workerPaneIds,
+        teamName: sanitized,
+        workerName: wName,
+        workerIndex,
+        agentType: assignment.agentType,
+        task,
+        taskId,
+        cwd: leaderCwd,
+        workerCwd: workersInfo[workerIndex]?.working_dir ?? leaderCwd,
+        worktreePath: workersInfo[workerIndex]?.worktree_path,
+        resolvedBinaryPaths,
+        ...assignment.model ? { model: assignment.model } : {},
+        ...assignment.role ? { role: assignment.role } : {}
+      });
+      if (workerLaunch.paneId) {
+        workerPaneIds.push(workerLaunch.paneId);
+        const workerInfo = workersInfo[workerIndex];
+        if (workerInfo) {
+          workerInfo.pane_id = workerLaunch.paneId;
+          workerInfo.assigned_tasks = workerLaunch.startupAssigned ? [taskId] : [];
+          workerInfo.worker_cli = assignment.agentType;
+          if (workerLaunch.outputFile) {
+            workerInfo.output_file = workerLaunch.outputFile;
+          }
         }
       }
+      if (workerLaunch.startupFailureReason) {
+        const logEventFailure2 = createSwallowedErrorLogger(
+          "team.runtime-v2.startTeamV2 appendTeamEvent failed"
+        );
+        appendTeamEvent(sanitized, {
+          type: "team_leader_nudge",
+          worker: "leader-fixed",
+          reason: `startup_manual_intervention_required:${wName}:${workerLaunch.startupFailureReason}`
+        }, leaderCwd).catch(logEventFailure2);
+      }
     }
-    if (workerLaunch.startupFailureReason) {
-      const logEventFailure2 = createSwallowedErrorLogger(
-        "team.runtime-v2.startTeamV2 appendTeamEvent failed"
-      );
-      appendTeamEvent(sanitized, {
-        type: "team_leader_nudge",
-        worker: "leader-fixed",
-        reason: `startup_manual_intervention_required:${wName}:${workerLaunch.startupFailureReason}`
-      }, leaderCwd).catch(logEventFailure2);
-    }
+  } catch (error) {
+    await rollbackStartedNativeWorktreeStartup({
+      teamName: sanitized,
+      cwd: leaderCwd,
+      cause: error,
+      sessionName: sessionName2,
+      leaderPaneId,
+      workerPaneIds,
+      sessionMode: session.sessionMode
+    });
+    throw error;
   }
   teamConfig.workers = workersInfo;
-  await saveTeamConfig(teamConfig, leaderCwd);
+  try {
+    await saveTeamConfig(teamConfig, leaderCwd);
+  } catch (error) {
+    await rollbackStartedNativeWorktreeStartup({
+      teamName: sanitized,
+      cwd: leaderCwd,
+      cause: error,
+      sessionName: sessionName2,
+      leaderPaneId,
+      workerPaneIds,
+      sessionMode: session.sessionMode
+    });
+    throw error;
+  }
   const logEventFailure = createSwallowedErrorLogger(
     "team.runtime-v2.startTeamV2 appendTeamEvent failed"
   );
@@ -6926,8 +7058,8 @@ async function processCliWorkerVerdicts(teamName, cwd) {
   for (const worker of config.workers) {
     const outputFile = worker.output_file;
     if (!outputFile) continue;
-    const alive = await isWorkerPaneAlive(worker.pane_id);
-    if (alive) continue;
+    const liveness = await getWorkerPaneLiveness(worker.pane_id);
+    if (liveness !== "dead") continue;
     if (!fsExistsSync(outputFile)) {
       results.push({ workerName: worker.name, taskId: null, status: "file_missing" });
       continue;
@@ -7068,17 +7200,18 @@ async function monitorTeamV2(teamName, cwd) {
   const workerScanStartMs = performance.now();
   const workerSignals = await Promise.all(
     config.workers.map(async (worker) => {
-      const alive = await isWorkerPaneAlive(worker.pane_id);
+      const liveness = await getWorkerPaneLiveness(worker.pane_id);
+      const alive = liveness === "alive";
       const [status, heartbeat, paneCapture] = await Promise.all([
         readWorkerStatus(sanitized, worker.name, cwd),
         readWorkerHeartbeat(sanitized, worker.name, cwd),
         alive ? captureWorkerPane(worker.pane_id) : Promise.resolve("")
       ]);
-      return { worker, alive, status, heartbeat, paneCapture };
+      return { worker, alive, liveness, status, heartbeat, paneCapture };
     })
   );
   const workerScanMs = performance.now() - workerScanStartMs;
-  for (const { worker: w, alive, status, heartbeat, paneCapture } of workerSignals) {
+  for (const { worker: w, alive, liveness, status, heartbeat, paneCapture } of workerSignals) {
     const currentTask = status.current_task_id ? taskById.get(status.current_task_id) ?? null : null;
     const outstandingTask = currentTask ?? findOutstandingWorkerTask(w, taskById, inProgressByOwner);
     const expectedTaskId = status.current_task_id ?? outstandingTask?.id ?? w.assigned_tasks[0] ?? "";
@@ -7089,6 +7222,7 @@ async function monitorTeamV2(teamName, cwd) {
     workers.push({
       name: w.name,
       alive,
+      liveness,
       status,
       heartbeat,
       assignedTasks: w.assigned_tasks,
@@ -7101,7 +7235,7 @@ async function monitorTeamV2(teamName, cwd) {
       team_state_root: w.team_state_root,
       turnsWithoutProgress
     });
-    if (!alive) {
+    if (liveness === "dead") {
       deadWorkers.push(w.name);
       const deadWorkerTasks = inProgressByOwner.get(w.name) || [];
       for (const t of deadWorkerTasks) {
@@ -7163,7 +7297,7 @@ async function monitorTeamV2(teamName, cwd) {
   await emitMonitorDerivedEvents(
     sanitized,
     allTasks,
-    workers.map((w) => ({ name: w.name, alive: w.alive, status: w.status })),
+    workers.map((w) => ({ name: w.name, alive: w.alive, liveness: w.liveness, status: w.status })),
     previousSnapshot,
     cwd
   );
@@ -7172,6 +7306,7 @@ async function monitorTeamV2(teamName, cwd) {
   await writeMonitorSnapshot(sanitized, {
     taskStatusById: Object.fromEntries(allTasks.map((t) => [t.id, t.status])),
     workerAliveByName: Object.fromEntries(workers.map((w) => [w.name, w.alive])),
+    workerLivenessByName: Object.fromEntries(workers.map((w) => [w.name, w.liveness])),
     workerStateByName: Object.fromEntries(workers.map((w) => [w.name, w.status.state])),
     workerTurnCountByName: Object.fromEntries(workers.map((w) => [w.name, w.heartbeat?.turn_count ?? 0])),
     workerTaskIdByName: Object.fromEntries(workers.map((w) => [w.name, w.status.current_task_id ?? ""])),
@@ -7275,7 +7410,7 @@ async function shutdownTeamV2(teamName, cwd, options = {}) {
       const requestedAt = (/* @__PURE__ */ new Date()).toISOString();
       await writeShutdownRequest(sanitized, w.name, "leader-fixed", cwd);
       shutdownRequestTimes.set(w.name, requestedAt);
-      const shutdownAckPath = w.worktree_path ? `$OMC_TEAM_STATE_ROOT/team/${sanitized}/workers/${w.name}/shutdown-ack.json` : TeamPaths.shutdownAck(sanitized, w.name);
+      const shutdownAckPath = w.worktree_path ? `$OMC_TEAM_STATE_ROOT/workers/${w.name}/shutdown-ack.json` : TeamPaths.shutdownAck(sanitized, w.name);
       const shutdownInbox = `# Shutdown Request
 
 All tasks are complete. Please wrap up and respond with a shutdown acknowledgement.
@@ -7483,7 +7618,7 @@ var init_runtime_v2 = __esm({
 import { randomUUID as randomUUID6 } from "crypto";
 import { spawn } from "child_process";
 import { existsSync as existsSync17, mkdirSync as mkdirSync3, readFileSync as readFileSync10, writeFileSync as writeFileSync3 } from "fs";
-import { readFile as readFile10, rm as rm4 } from "fs/promises";
+import { readFile as readFile10, rm as rm5 } from "fs/promises";
 import { dirname as dirname13, join as join20 } from "path";
 import { fileURLToPath as fileURLToPath3 } from "url";
 
@@ -7714,6 +7849,7 @@ async function resumeTeam(teamName, cwd) {
 
 // src/team/api-interop.ts
 init_runtime_v2();
+init_git_worktree();
 init_swallowed_error();
 var TEAM_UPDATE_TASK_MUTABLE_FIELDS = /* @__PURE__ */ new Set(["subject", "description", "blocked_by", "requires_code_change"]);
 var TEAM_UPDATE_TASK_REQUEST_FIELDS = /* @__PURE__ */ new Set(["team_name", "task_id", "workingDirectory", ...TEAM_UPDATE_TASK_MUTABLE_FIELDS]);
@@ -7792,9 +7928,21 @@ function isRuntimeV2Config(config) {
 function isLegacyRuntimeConfig(config) {
   return !!config && typeof config === "object" && Array.isArray(config.agentTypes);
 }
+function assertNoNativeWorktreeCleanupEvidence(teamName, cwd) {
+  const safety = inspectTeamWorktreeCleanupSafety(teamName, cwd);
+  if (!safety.hasEvidence) return;
+  const evidence = safety.blockers.length > 0 ? safety.blockers : safety.entries.map((entry) => ({
+    workerName: entry.workerName,
+    path: entry.path,
+    reason: "worktree_cleanup_evidence_present"
+  }));
+  const details = evidence.map((item) => `${item.workerName}:${item.reason}:${item.path}`).join(";");
+  throw new Error(`cleanup_blocked:worktree_cleanup_evidence_present:${details}`);
+}
 async function executeTeamCleanupViaRuntime(teamName, cwd) {
   const config = await teamReadConfig(teamName, cwd);
   if (!config) {
+    assertNoNativeWorktreeCleanupEvidence(teamName, cwd);
     await teamCleanup(teamName, cwd);
     return;
   }
@@ -7809,6 +7957,7 @@ async function executeTeamCleanupViaRuntime(teamName, cwd) {
     await shutdownTeam(teamName, sessionName2, cwd, 3e4, void 0, leaderPaneId, legacyConfig.tmuxOwnsWindow === true);
     return;
   }
+  assertNoNativeWorktreeCleanupEvidence(teamName, cwd);
   await teamCleanup(teamName, cwd);
 }
 function readTeamStateRootFromFile(path4) {
@@ -7861,7 +8010,10 @@ function resolveTeamWorkingDirectory(teamName, preferredCwd) {
   if (!normalizedTeamName) return preferredCwd;
   const envTeamStateRoot = readTeamStateRootFromEnv();
   if (typeof envTeamStateRoot === "string" && envTeamStateRoot.trim() !== "") {
-    return stateRootToWorkingDirectory(envTeamStateRoot.trim());
+    const envWorkingDirectory = stateRootToWorkingDirectory(envTeamStateRoot.trim());
+    if (teamStateExists(normalizedTeamName, envWorkingDirectory)) {
+      return envWorkingDirectory;
+    }
   }
   const seeds = [];
   for (const seed of [preferredCwd, process.cwd()]) {
@@ -8299,9 +8451,11 @@ async function executeTeamApiOperation(operation, args, fallbackCwd) {
           pid: args.pid,
           pane_id: args.pane_id,
           working_dir: args.working_dir,
+          worktree_repo_root: args.worktree_repo_root,
           worktree_path: args.worktree_path,
           worktree_branch: args.worktree_branch,
           worktree_detached: args.worktree_detached,
+          worktree_created: args.worktree_created,
           team_state_root: args.team_state_root
         }, cwd);
         return { ok: true, operation, data: { worker } };
@@ -8340,6 +8494,17 @@ async function executeTeamApiOperation(operation, args, fallbackCwd) {
       case "orphan-cleanup": {
         const teamName = String(args.team_name || "").trim();
         if (!teamName) return { ok: false, operation, error: { code: "invalid_input", message: "team_name is required" } };
+        const safety = inspectTeamWorktreeCleanupSafety(teamName, cwd);
+        if (safety.hasEvidence && args.acknowledge_lost_worktree_recovery !== true) {
+          return {
+            ok: false,
+            operation,
+            error: {
+              code: "invalid_input",
+              message: "orphan_cleanup_blocked:worktree_recovery_evidence_present; pass acknowledge_lost_worktree_recovery=true only after manually preserving or intentionally discarding worker worktrees and root AGENTS backups"
+            }
+          };
+        }
         await teamCleanup(teamName, cwd);
         return { ok: true, operation, data: { team_name: teamName } };
       }
@@ -8531,6 +8696,30 @@ function parseJsonSafe(content) {
     return null;
   }
 }
+async function resolveCleanupPaneEvidence(job, jobsDir, jobId) {
+  const paneArtifact = await readFile10(panesArtifactPath(jobsDir, jobId), "utf-8").then((content) => parseJsonSafe(content)).catch(() => null);
+  if (paneArtifact?.paneIds?.length) return { paneArtifact };
+  const config = await readTeamConfig(job.teamName, job.cwd).catch(() => null);
+  if (!config) {
+    return { paneArtifact, livenessUnknownReason: "worker_liveness_unknown:no_config_or_panes" };
+  }
+  const configPaneIds = (config.workers ?? []).map((worker) => worker.pane_id).filter((paneId) => typeof paneId === "string" && paneId.trim().length > 0);
+  if (configPaneIds.length > 0) {
+    return {
+      paneArtifact: {
+        paneIds: configPaneIds,
+        leaderPaneId: config.leader_pane_id ?? paneArtifact?.leaderPaneId ?? "",
+        sessionName: config.tmux_session || paneArtifact?.sessionName,
+        ownsWindow: config.tmux_window_owned ?? paneArtifact?.ownsWindow
+      }
+    };
+  }
+  const hasConfiguredWorkers = (config.workers ?? []).length > 0 || config.worker_count > 0;
+  if (hasConfiguredWorkers) {
+    return { paneArtifact, livenessUnknownReason: "worker_liveness_unknown:no_worker_pane_ids" };
+  }
+  return { paneArtifact };
+}
 function readJobFromDisk(jobId, jobsDir) {
   try {
     const content = readFileSync10(jobPath(jobsDir, jobId), "utf-8");
@@ -8710,7 +8899,18 @@ async function cleanupTeamJob(jobId, graceMs = 1e4) {
   if (!job) {
     throw new Error(`No job found: ${jobId}`);
   }
-  const paneArtifact = await readFile10(panesArtifactPath(jobsDir, jobId), "utf-8").then((content) => parseJsonSafe(content)).catch(() => null);
+  const { paneArtifact, livenessUnknownReason } = await resolveCleanupPaneEvidence(job, jobsDir, jobId);
+  if (livenessUnknownReason) {
+    writeJobToDisk(jobId, {
+      ...job,
+      cleanupBlockedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      cleanupBlockedReason: livenessUnknownReason
+    }, jobsDir);
+    return {
+      jobId,
+      message: `Preserved team state because worker liveness could not be proven (${livenessUnknownReason})`
+    };
+  }
   if (paneArtifact?.sessionName && (paneArtifact.ownsWindow === true || !paneArtifact.sessionName.includes(":"))) {
     const sessionMode = paneArtifact.ownsWindow === true ? paneArtifact.sessionName.includes(":") ? "dedicated-window" : "detached-session" : "detached-session";
     await killTeamSession(
@@ -8728,14 +8928,45 @@ async function cleanupTeamJob(jobId, graceMs = 1e4) {
       graceMs
     });
   }
-  await rm4(teamStateRoot2(job.cwd, job.teamName), {
+  if (paneArtifact?.paneIds?.length) {
+    const liveness = await Promise.all(paneArtifact.paneIds.map(async (paneId) => [paneId, await getWorkerLiveness(paneId)]));
+    const alivePaneIds = liveness.filter(([, state]) => state === "alive").map(([paneId]) => paneId);
+    const unknownPaneIds = liveness.filter(([, state]) => state === "unknown").map(([paneId]) => paneId);
+    if (alivePaneIds.length > 0 || unknownPaneIds.length > 0) {
+      const reason = alivePaneIds.length > 0 ? `worker_panes_still_alive:${alivePaneIds.join(",")}` : `worker_liveness_unknown:${unknownPaneIds.join(",")}`;
+      writeJobToDisk(jobId, {
+        ...job,
+        cleanupBlockedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        cleanupBlockedReason: reason
+      }, jobsDir);
+      return {
+        jobId,
+        message: alivePaneIds.length > 0 ? `Preserved team state because worker pane(s) are still alive: ${alivePaneIds.join(", ")}` : `Preserved team state because worker pane liveness is unknown: ${unknownPaneIds.join(", ")}`
+      };
+    }
+  }
+  let preservedWorktrees = 0;
+  try {
+    const cleanupResult = cleanupTeamWorktrees(job.teamName, job.cwd);
+    preservedWorktrees = cleanupResult.preserved.length;
+  } catch {
+    preservedWorktrees = 1;
+  }
+  if (preservedWorktrees > 0) {
+    writeJobToDisk(jobId, {
+      ...job,
+      cleanupBlockedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      cleanupBlockedReason: `worktrees_preserved:${preservedWorktrees}`
+    }, jobsDir);
+    return {
+      jobId,
+      message: `Preserved team state because ${preservedWorktrees} worktree(s) require follow-up cleanup`
+    };
+  }
+  await rm5(teamStateRoot2(job.cwd, job.teamName), {
     recursive: true,
     force: true
   }).catch(() => void 0);
-  try {
-    cleanupTeamWorktrees(job.teamName, job.cwd);
-  } catch {
-  }
   writeJobToDisk(jobId, {
     ...job,
     cleanedUpAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -8763,9 +8994,22 @@ async function teamStatusByTeamName(teamName, cwd = process.cwd()) {
       running: true,
       sessionName: config?.tmux_session,
       leaderPaneId: config?.leader_pane_id,
+      workspace_mode: config?.workspace_mode,
+      worktree_mode: config?.worktree_mode,
+      team_state_root: config?.team_state_root,
       workerPaneIds: Array.from(new Set(
         (config?.workers ?? []).map((worker) => worker.pane_id).filter((paneId) => typeof paneId === "string" && paneId.trim().length > 0)
       )),
+      workers: (config?.workers ?? []).map((worker) => ({
+        name: worker.name,
+        working_dir: worker.working_dir,
+        worktree_repo_root: worker.worktree_repo_root,
+        worktree_path: worker.worktree_path,
+        worktree_branch: worker.worktree_branch,
+        worktree_detached: worker.worktree_detached,
+        worktree_created: worker.worktree_created,
+        team_state_root: worker.team_state_root
+      })),
       snapshot: snapshot2
     };
   }
@@ -8823,7 +9067,7 @@ async function teamShutdownByName(teamName, options = {}) {
   const runtime = await resumeTeam(teamName, cwd);
   if (!runtime) {
     if (options.force) {
-      await rm4(teamStateRoot2(cwd, teamName), { recursive: true, force: true }).catch(() => void 0);
+      await rm5(teamStateRoot2(cwd, teamName), { recursive: true, force: true }).catch(() => void 0);
       return {
         teamName,
         shutdown: true,
@@ -8904,6 +9148,10 @@ Usage:
   omc team api <operation> [--input '<json>'] [--json] [--cwd DIR]
   omc team [ralph] <N:agent-type[:role]> "task" [--json] [--cwd DIR] [--new-window]
 
+Worktrees:
+  Native per-worker git worktree mode is opt-in/config-gated with team.ops.worktreeMode or OMC_TEAM_WORKTREE_MODE=detached|named.
+  Status JSON includes workspace_mode, worktree_mode, team_state_root, and per-worker worktree metadata.
+
 Examples:
   omc team start --agent codex --count 2 --task "review auth flow" --new-window
   omc team status omc-abc123
@@ -8912,6 +9160,10 @@ Examples:
   omc team shutdown auth-review --force
   omc team api list-tasks --input '{"teamName":"auth-review"}' --json
   omc team 3:codex "refactor launch command"
+
+Worktree mode:
+  Native worker worktrees are opt-in/config-gated for runtime-v2.
+  Status surfaces workspace_mode, worktree_mode, team_state_root, and worker worktree metadata when enabled.
 `.trim();
 function parseStartArgs(args) {
   const agentValues = [];

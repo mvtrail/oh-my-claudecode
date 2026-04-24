@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     sendToWorker: vi.fn(),
     waitForPaneReady: vi.fn(),
     applyMainVerticalLayout: vi.fn(),
+    killTeamSession: vi.fn(async () => { }),
     execFile: vi.fn(),
     spawnSync: vi.fn(() => ({ status: 0 })),
     tmuxExecAsync: vi.fn(),
@@ -54,6 +55,7 @@ vi.mock('../tmux-session.js', async (importOriginal) => {
         sendToWorker: mocks.sendToWorker,
         waitForPaneReady: mocks.waitForPaneReady,
         applyMainVerticalLayout: mocks.applyMainVerticalLayout,
+        killTeamSession: mocks.killTeamSession,
     };
 });
 describe('runtime v2 startup inbox dispatch', () => {
@@ -66,6 +68,8 @@ describe('runtime v2 startup inbox dispatch', () => {
         mocks.sendToWorker.mockReset();
         mocks.waitForPaneReady.mockReset();
         mocks.applyMainVerticalLayout.mockReset();
+        mocks.killTeamSession.mockReset();
+        mocks.killTeamSession.mockResolvedValue(undefined);
         mocks.execFile.mockReset();
         mocks.spawnSync.mockReset();
         modelContractMocks.buildWorkerArgv.mockReset();
@@ -146,7 +150,7 @@ describe('runtime v2 startup inbox dispatch', () => {
         expect(mocks.spawnWorkerInPane).toHaveBeenCalledWith('dispatch-session', '%2', expect.objectContaining({
             envVars: expect.objectContaining({
                 OMC_TEAM_WORKER: 'dispatch-team/worker-1',
-                OMC_TEAM_STATE_ROOT: join(cwd, '.omc', 'state'),
+                OMC_TEAM_STATE_ROOT: join(cwd, '.omc', 'state', 'team', 'dispatch-team'),
                 OMC_TEAM_LEADER_CWD: cwd,
             }),
         }));
@@ -188,57 +192,73 @@ describe('runtime v2 startup inbox dispatch', () => {
         expect(manifest.workspace_mode).toBe('worktree');
         expect(manifest.worktree_mode).toBe('named');
         const requests = await listDispatchRequests('dispatch-team', cwd, { kind: 'inbox' });
-        expect(requests[0]?.trigger_message).toContain('$OMC_TEAM_STATE_ROOT/team/dispatch-team/workers/worker-1/inbox.md');
+        expect(requests[0]?.trigger_message).toContain('$OMC_TEAM_STATE_ROOT/workers/worker-1/inbox.md');
+        expect(requests[0]?.trigger_message).not.toContain('$OMC_TEAM_STATE_ROOT/team/dispatch-team');
         expect(runtime.config.team_state_root).toBeDefined();
         const teamStateRoot = runtime.config.team_state_root;
         expect(requests[0]?.trigger_message.replace('$OMC_TEAM_STATE_ROOT', teamStateRoot))
             .toContain(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'workers', 'worker-1', 'inbox.md'));
         const overlay = await readFile(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'workers', 'worker-1', 'AGENTS.md'), 'utf-8');
-        expect(overlay).toContain('$OMC_TEAM_STATE_ROOT/team/dispatch-team/workers/worker-1/status.json');
+        expect(overlay).toContain('$OMC_TEAM_STATE_ROOT/workers/worker-1/status.json');
+        expect(overlay).not.toContain('$OMC_TEAM_STATE_ROOT/team/dispatch-team');
     });
-    it('uses canonical team-scoped shutdown ack path for worktree-backed workers', async () => {
-        cwd = await mkdtemp(join(tmpdir(), 'omc-runtime-v2-shutdown-inbox-'));
+    it('kills the started team session and rolls back worktrees when manifest persistence fails', async () => {
+        cwd = await mkdtemp(join(tmpdir(), 'omc-runtime-v2-post-session-rollback-'));
         execFileSync('git', ['init'], { cwd, stdio: 'pipe' });
         execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd, stdio: 'pipe' });
         execFileSync('git', ['config', 'user.name', 'Test User'], { cwd, stdio: 'pipe' });
-        await writeFile(join(cwd, 'README.md'), 'shutdown inbox contract test\n', 'utf-8');
+        await writeFile(join(cwd, 'README.md'), 'post-session rollback test\n', 'utf-8');
         execFileSync('git', ['add', 'README.md'], { cwd, stdio: 'pipe' });
         execFileSync('git', ['commit', '-m', 'initial'], { cwd, stdio: 'pipe' });
-        const { createWorkerWorktree } = await import('../git-worktree.js');
-        const worktree = createWorkerWorktree('dispatch-team', 'worker-1', cwd);
-        await writeFile(join(worktree.path, 'dirty.txt'), 'preserve state so shutdown inbox remains readable', 'utf-8');
-        const teamRoot = join(cwd, '.omc', 'state', 'team', 'dispatch-team');
-        await mkdir(teamRoot, { recursive: true });
-        await writeFile(join(teamRoot, 'config.json'), JSON.stringify({
-            name: 'dispatch-team',
-            task: 'demo',
-            agent_type: 'claude',
-            worker_launch_mode: 'interactive',
-            worker_count: 1,
-            max_workers: 20,
-            workers: [{
-                    name: 'worker-1',
-                    index: 1,
-                    role: 'claude',
-                    assigned_tasks: [],
-                    worktree_path: worktree.path,
-                }],
-            created_at: new Date().toISOString(),
-            tmux_session: '',
-            leader_pane_id: null,
-            hud_pane_id: null,
-            resize_hook_name: null,
-            resize_hook_target: null,
-            next_task_id: 1,
-            workspace_mode: 'worktree',
-            worktree_mode: 'named',
-            team_state_root: join(cwd, '.omc', 'state'),
-        }, null, 2), 'utf-8');
-        const { shutdownTeamV2 } = await import('../runtime-v2.js');
-        await shutdownTeamV2('dispatch-team', cwd, { timeoutMs: 0 });
-        const inbox = await readFile(join(teamRoot, 'workers', 'worker-1', 'inbox.md'), 'utf-8');
-        expect(inbox).toContain('$OMC_TEAM_STATE_ROOT/team/dispatch-team/workers/worker-1/shutdown-ack.json');
-        expect(inbox).not.toContain('$OMC_TEAM_STATE_ROOT/workers/worker-1/shutdown-ack.json');
+        mocks.createTeamSession.mockResolvedValueOnce({
+            sessionName: 'dispatch-window',
+            leaderPaneId: '%1',
+            workerPaneIds: [],
+            sessionMode: 'dedicated-window',
+        });
+        await mkdir(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'manifest.json'), { recursive: true });
+        const { startTeamV2 } = await import('../runtime-v2.js');
+        await expect(startTeamV2({
+            teamName: 'dispatch-team',
+            workerCount: 1,
+            agentTypes: ['claude'],
+            pluginConfig: { team: { ops: { worktreeMode: 'named' } } },
+            tasks: [{ subject: 'Worktree rollback', description: 'Fail after tmux session starts' }],
+            cwd,
+            newWindow: true,
+        })).rejects.toThrow();
+        expect(mocks.killTeamSession).toHaveBeenCalledWith('dispatch-window', [], '%1', { sessionMode: 'dedicated-window' });
+        await expect(readFile(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'config.json'), 'utf-8'))
+            .rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readFile(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'worktrees.json'), 'utf-8'))
+            .rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readFile(join(cwd, '.omc', 'team', 'dispatch-team', 'worktrees', 'worker-1', 'AGENTS.md'), 'utf-8'))
+            .rejects.toMatchObject({ code: 'ENOENT' });
+    });
+    it('rolls back clean native worktrees when startup fails before config is persisted', async () => {
+        cwd = await mkdtemp(join(tmpdir(), 'omc-runtime-v2-worktree-rollback-'));
+        execFileSync('git', ['init'], { cwd, stdio: 'pipe' });
+        execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd, stdio: 'pipe' });
+        execFileSync('git', ['config', 'user.name', 'Test User'], { cwd, stdio: 'pipe' });
+        await writeFile(join(cwd, 'README.md'), 'worktree rollback test\n', 'utf-8');
+        execFileSync('git', ['add', 'README.md'], { cwd, stdio: 'pipe' });
+        execFileSync('git', ['commit', '-m', 'initial'], { cwd, stdio: 'pipe' });
+        mocks.createTeamSession.mockRejectedValueOnce(new Error('tmux_start_failed'));
+        const { startTeamV2 } = await import('../runtime-v2.js');
+        await expect(startTeamV2({
+            teamName: 'dispatch-team',
+            workerCount: 1,
+            agentTypes: ['claude'],
+            pluginConfig: { team: { ops: { worktreeMode: 'named' } } },
+            tasks: [{ subject: 'Worktree rollback', description: 'Fail before config persists' }],
+            cwd,
+        })).rejects.toThrow('tmux_start_failed');
+        await expect(readFile(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'config.json'), 'utf-8'))
+            .rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readFile(join(cwd, '.omc', 'state', 'team', 'dispatch-team', 'worktrees.json'), 'utf-8'))
+            .rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readFile(join(cwd, '.omc', 'team', 'dispatch-team', 'worktrees', 'worker-1', 'AGENTS.md'), 'utf-8'))
+            .rejects.toMatchObject({ code: 'ENOENT' });
     });
     it('uses owner-aware startup allocation when task owners are provided', async () => {
         cwd = await mkdtemp(join(tmpdir(), 'omc-runtime-v2-owner-startup-'));

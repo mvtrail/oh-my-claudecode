@@ -7,6 +7,7 @@ This guide covers all migration paths for oh-my-claudecode. Find your current ve
 ## Table of Contents
 
 - [Unreleased: Team MCP Runtime Deprecation (CLI-Only)](#unreleased-team-mcp-runtime-deprecation-cli-only)
+- [Unreleased: Native Team Worktree Mode (Opt-In)](#unreleased-native-team-worktree-mode-opt-in)
 - [v3.5.3 → v3.5.5: Test Fixes & Cleanup](#v353--v355-test-fixes--cleanup)
 - [v3.5.2 → v3.5.3: Skill Consolidation](#v352--v353-skill-consolidation)
 - [v2.x → v3.0: Package Rename & Auto-Activation](#v2x--v30-package-rename--auto-activation)
@@ -62,6 +63,21 @@ omc team api list-tasks --input '{"team_name":"review-auth-flow"}' --json
 ```
 
 ---
+
+## Unreleased: Native Team Worktree Mode (Opt-In)
+
+### TL;DR
+
+`omc team` runtime-v2 is gaining an opt-in worker worktree mode. Worktree-backed workers run from dedicated git worktrees while task lifecycle, mailbox, status, and manifest files stay under the leader workspace's team-specific coordination root (`<repo>/.omc/state/team/<team-name>`).
+
+### Contract
+
+- Worktree paths use `<repo>/.omc/team/<team-name>/worktrees/<worker-name>`.
+- `OMC_TEAM_STATE_ROOT` points workers back to `<repo>/.omc/state/team/<team-name>`.
+- Status/config/manifest/identity surfaces should expose `workspace_mode`, `worktree_mode`, `team_state_root`, and worker worktree metadata.
+- Dirty worker worktrees are preserved and reported; they are not force-cleaned by shutdown/cleanup.
+
+See [Native Team Worktree Mode](TEAM-WORKTREE-MODE.md) for the full rollout contract and verification checklist.
 
 ## v3.5.3 → v3.5.5: Test Fixes & Cleanup
 

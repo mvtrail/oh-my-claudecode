@@ -31,6 +31,8 @@ Examples:
   omc team shutdown fix-failing-tests
   omc team api send-message --input '{"team_name":"my-team","from_worker":"worker-1","to_worker":"leader-fixed","body":"ACK"}' --json
 
+Worktrees (opt-in): set team.ops.worktreeMode or OMC_TEAM_WORKTREE_MODE=detached|branch to launch workers from .omc/team/<team>/worktrees/<worker>. Status includes workspace/worktree metadata.
+
 Roles (optional): architect, executor, planner, analyst, critic, debugger, verifier,
   code-reviewer, security-reviewer, test-engineer, debugger, designer, writer, scientist
 `;
@@ -83,7 +85,7 @@ const TEAM_API_OPERATION_OPTIONAL_FIELDS = {
     'read-shutdown-ack': ['min_updated_at'],
     'write-worker-identity': [
         'assigned_tasks', 'pid', 'pane_id', 'working_dir',
-        'worktree_path', 'worktree_branch', 'worktree_detached', 'team_state_root',
+        'worktree_repo_root', 'worktree_path', 'worktree_branch', 'worktree_detached', 'worktree_created', 'team_state_root',
     ],
     'append-event': ['task_id', 'message_id', 'reason'],
     'write-task-approval': ['required'],
@@ -596,8 +598,14 @@ async function handleTeamStatus(teamName, cwd) {
             },
         });
         const latestLeaderNudge = (await readTeamEventsByType(teamName, 'team_leader_nudge', cwd)).at(-1);
+        const { readTeamConfig } = await import('../../team/monitor.js');
+        const config = await readTeamConfig(teamName, cwd);
         console.log(`team=${snapshot.teamName} phase=${snapshot.phase}`);
+        console.log(`workspace_mode=${config?.workspace_mode ?? 'single'} worktree_mode=${config?.worktree_mode ?? 'disabled'} team_state_root=${config?.team_state_root ?? 'n/a'}`);
         console.log(`workers: total=${snapshot.workers.length}`);
+        for (const worker of config?.workers ?? []) {
+            console.log(`worker=${worker.name} working_dir=${worker.working_dir ?? 'n/a'} worktree_repo_root=${worker.worktree_repo_root ?? 'n/a'} worktree_path=${worker.worktree_path ?? 'n/a'} worktree_branch=${worker.worktree_branch ?? 'n/a'} worktree_detached=${String(worker.worktree_detached ?? false)} worktree_created=${String(worker.worktree_created ?? false)}`);
+        }
         console.log(`tasks: total=${snapshot.tasks.total} pending=${snapshot.tasks.pending} blocked=${snapshot.tasks.blocked} in_progress=${snapshot.tasks.in_progress} completed=${snapshot.tasks.completed} failed=${snapshot.tasks.failed}`);
         console.log(`leader_next_action=${leaderGuidance.nextAction}`);
         console.log(`leader_guidance=${leaderGuidance.message}`);

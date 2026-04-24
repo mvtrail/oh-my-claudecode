@@ -294,12 +294,6 @@ function forgetMetadataUnlocked(repoRoot, teamName, workerName) {
     const existing = readMetadata(repoRoot, teamName).filter(entry => entry.workerName !== workerName);
     writeMetadata(repoRoot, teamName, existing);
 }
-function forgetMetadata(repoRoot, teamName, workerName) {
-    const metaLockPath = getMetadataPath(repoRoot, teamName) + '.lock';
-    withFileLockSync(metaLockPath, () => {
-        forgetMetadataUnlocked(repoRoot, teamName, workerName);
-    });
-}
 function assertCompatibleExistingWorktree(repoRoot, wtPath, expectedBranch, mode) {
     const registeredBranch = getRegisteredWorktreeBranch(repoRoot, wtPath);
     if (!registeredBranch) {
