@@ -231,7 +231,7 @@ These keywords invoke a single appropriate agent directly, without running the f
 ### Next steps
 
 - [Configuration](#configuration) - Adjust agent models and features for your project
-- [Concepts](/docs/concepts) - Understand the relationship between agents, skills, and hooks
+- [Architecture](./ARCHITECTURE.md) - Understand the relationship between agents, skills, and hooks
 
 ---
 
